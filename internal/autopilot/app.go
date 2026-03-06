@@ -50,7 +50,7 @@ func (a *App) Run(args []string) int {
 	}
 	statePath := filepath.Join(dirs.Base, "session_state.json")
 	var state *State
-	if inv.Mode == modeInteractiveBare {
+	if inv.Mode == modeInteractiveBare || shouldBootstrapInteractiveResume(inv) {
 		state, err = loadStateIfExists(statePath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
@@ -76,7 +76,7 @@ func (a *App) Run(args []string) int {
 	for {
 		if state == nil {
 			var bootstrapResult *turnResult
-			bootstrapResult, state, err = a.bootstrapBareInteractiveState(inv, dirs, statePath)
+			bootstrapResult, state, err = a.bootstrapInteractiveState(inv, dirs, statePath)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				return 1
@@ -193,8 +193,9 @@ func (a *App) Run(args []string) int {
 	}
 }
 
-func (a *App) bootstrapBareInteractiveState(inv Invocation, dirs StateDirs, statePath string) (*turnResult, *State, error) {
+func (a *App) bootstrapInteractiveState(inv Invocation, dirs StateDirs, statePath string) (*turnResult, *State, error) {
 	turnIndex := 1
+	startedAt := time.Now()
 	promptPath := filepath.Join(dirs.Prompts, fmt.Sprintf("turn-%04d-bootstrap.md", turnIndex))
 	messagePath := filepath.Join(dirs.Messages, fmt.Sprintf("turn-%04d-bootstrap.md", turnIndex))
 	result, err := runInteractiveCodexTurn(a.realCodex, inv.Workspace, "", promptPath, messagePath, inv.initialInteractiveArgs(""), "")
@@ -208,7 +209,13 @@ func (a *App) bootstrapBareInteractiveState(inv Invocation, dirs StateDirs, stat
 	if err != nil {
 		return nil, nil, err
 	}
-	initialGoal := strings.TrimSpace(artifact.InitialUserGoal)
+	initialGoal, err := extractBootstrapUserGoal(artifact.SessionPath, startedAt)
+	if err != nil {
+		return nil, nil, err
+	}
+	if strings.TrimSpace(initialGoal) == "" {
+		initialGoal = strings.TrimSpace(artifact.InitialUserGoal)
+	}
 	if initialGoal == "" {
 		return nil, nil, fmt.Errorf("could not derive an initial project goal from the first interactive session in %s", artifact.SessionPath)
 	}
@@ -223,6 +230,10 @@ func (a *App) bootstrapBareInteractiveState(inv Invocation, dirs StateDirs, stat
 		return nil, nil, err
 	}
 	return result, state, nil
+}
+
+func shouldBootstrapInteractiveResume(inv Invocation) bool {
+	return inv.Mode == modeInteractiveResume && strings.TrimSpace(inv.Prompt) == ""
 }
 
 func (a *App) runSessionTurn(inv Invocation, state *State, workspace, prompt, promptPath, messagePath string) (*turnResult, error) {

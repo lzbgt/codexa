@@ -108,6 +108,7 @@ This is where you inspect the previous turn prompt, the final assistant message,
 The wrapper also tracks the matched Codex session id and session file path there, but the authoritative interactive transcript remains in `~/.codex/sessions/`.
 
 If you resume with `codexa --yolo resume --last` and do not provide a new prompt, the wrapper reuses the existing objective from `.codex-autopilot/session_state.json`. On a brand new workspace, there is no stored objective yet, so start with an explicit goal first.
+If the resumed session was originally created by native `codex` and there is still no wrapper state, that is now supported too: open it with `codexa --yolo resume --last` or `codexa --yolo resume <session-id>`, give Codex the first resumed prompt naturally, and after that turn exits the wrapper will bootstrap protocol state from that resumed session and continue automatically.
 
 ## 6. Operator engagement
 
@@ -160,6 +161,6 @@ export CODEX_AUTOPILOT_REAL_BIN=/opt/homebrew/bin/codex
 ## 9. Troubleshooting
 
 - If the wrapper passes a command straight through instead of entering autopilot mode, use one of the supported prompt or `exec` forms above.
-- If `codexa --yolo resume --last` errors on a fresh repo, start once with an explicit goal so the wrapper can persist the objective it should keep pursuing.
+- If `codexa --yolo resume --last` is pointed at a native Codex session, give the resumed session one real prompt first; after that first resumed turn exits, the wrapper can bootstrap and continue automatically.
 - If the wrapper cannot resolve the real Codex binary, set `CODEX_AUTOPILOT_REAL_BIN`.
 - If the wrapper stops because the repo is still dirty, inspect `.codex-autopilot/reports/turn-XXXX.json` and check whether Codex emitted the expected `post_turn_actions`.

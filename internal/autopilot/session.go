@@ -219,6 +219,56 @@ func extractInitialUserGoal(path string) (string, error) {
 	return "", nil
 }
 
+func extractBootstrapUserGoal(path string, since time.Time) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	cutoff := since.Add(-5 * time.Second)
+	scanner := newSessionScanner(file)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var envelope struct {
+			Timestamp string          `json:"timestamp"`
+			Type      string          `json:"type"`
+			Payload   json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(line, &envelope); err != nil {
+			continue
+		}
+		entryTime, err := time.Parse(time.RFC3339Nano, envelope.Timestamp)
+		if err != nil || entryTime.Before(cutoff) {
+			continue
+		}
+		switch envelope.Type {
+		case "event_msg":
+			var payload struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			}
+			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+				continue
+			}
+			if payload.Type == "user_message" {
+				goal := normalizeUserGoal(payload.Message)
+				if goal != "" {
+					return goal, nil
+				}
+			}
+		case "response_item":
+			goal, ok := parseUserResponseItem(envelope.Payload)
+			if ok && goal != "" {
+				return goal, nil
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", nil
+}
+
 func parseAssistantResponseItem(payload json.RawMessage) (string, bool) {
 	var item struct {
 		Type    string `json:"type"`
