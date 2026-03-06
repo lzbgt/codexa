@@ -191,5 +191,6 @@ export CODEX_AUTOPILOT_REAL_BIN=/opt/homebrew/bin/codex
 - If the wrapper passes a command straight through instead of entering autopilot mode, use one of the supported prompt or `exec` forms above.
 - If a session appears to behave like plain `codex`, check `.codex-autopilot/runtime.json` first. No file means no wrapper engagement for that run.
 - If `codexa --yolo resume`, `codexa --yolo resume --last`, or `codexa --yolo resume <session-id>` is pointed at a native Codex session with no wrapper state yet, give the resumed session one real prompt first; after that first resumed turn exits, the wrapper can bootstrap and continue automatically.
+- If the wrapper reports that multiple Codex sessions changed in the same workspace during one turn, close the extra session and rerun. The wrapper now refuses to guess which JSONL belongs to the turn.
 - If the wrapper cannot resolve the real Codex binary, set `CODEX_AUTOPILOT_REAL_BIN`.
 - If the wrapper stops because the repo is still dirty, inspect `.codex-autopilot/reports/turn-XXXX.json` and check whether Codex emitted the expected `post_turn_actions`.

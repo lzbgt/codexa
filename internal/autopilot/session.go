@@ -19,16 +19,65 @@ type sessionArtifact struct {
 	LastAgentMessage string
 }
 
+type sessionInventory map[string]sessionInventoryEntry
+
+type sessionInventoryEntry struct {
+	SessionID string
+	ModTime   time.Time
+}
+
+type sessionCandidate struct {
+	SessionID string
+	Path      string
+	ModTime   time.Time
+}
+
 func findLatestSessionArtifact(workspace string, since time.Time, wantedSessionID string) (*sessionArtifact, error) {
+	candidates, err := listSessionCandidates(workspace)
+	if err != nil {
+		return nil, err
+	}
+	path, sessionID, err := selectSessionCandidate(candidates, nil, since, wantedSessionID)
+	if err != nil {
+		return nil, err
+	}
+	return loadSessionArtifact(path, sessionID)
+}
+
+func snapshotSessionInventory(workspace string) (sessionInventory, error) {
+	candidates, err := listSessionCandidates(workspace)
+	if err != nil {
+		return nil, err
+	}
+	out := make(sessionInventory, len(candidates))
+	for _, candidate := range candidates {
+		out[candidate.Path] = sessionInventoryEntry{
+			SessionID: candidate.SessionID,
+			ModTime:   candidate.ModTime,
+		}
+	}
+	return out, nil
+}
+
+func findTurnSessionArtifact(workspace string, before sessionInventory, since time.Time, wantedSessionID string) (*sessionArtifact, error) {
+	candidates, err := listSessionCandidates(workspace)
+	if err != nil {
+		return nil, err
+	}
+	path, sessionID, err := selectSessionCandidate(candidates, before, since, wantedSessionID)
+	if err != nil {
+		return nil, err
+	}
+	return loadSessionArtifact(path, sessionID)
+}
+
+func listSessionCandidates(workspace string) ([]sessionCandidate, error) {
 	root, err := codexSessionsRoot()
 	if err != nil {
 		return nil, err
 	}
 	cleanWorkspace := filepath.Clean(workspace)
-	since = since.Add(-5 * time.Second)
-	var latestPath string
-	var latestTime time.Time
-	var latestID string
+	candidates := []sessionCandidate{}
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -40,9 +89,6 @@ func findLatestSessionArtifact(workspace string, since time.Time, wantedSessionI
 		if err != nil {
 			return err
 		}
-		if wantedSessionID == "" && info.ModTime().Before(since) {
-			return nil
-		}
 		sessionID, cwd, err := readSessionMeta(path)
 		if err != nil {
 			return nil
@@ -50,39 +96,81 @@ func findLatestSessionArtifact(workspace string, since time.Time, wantedSessionI
 		if filepath.Clean(cwd) != cleanWorkspace {
 			return nil
 		}
-		if wantedSessionID != "" && sessionID != wantedSessionID {
-			return nil
-		}
-		if latestPath == "" || info.ModTime().After(latestTime) {
-			latestPath = path
-			latestTime = info.ModTime()
-			latestID = sessionID
-		}
+		candidates = append(candidates, sessionCandidate{
+			SessionID: sessionID,
+			Path:      path,
+			ModTime:   info.ModTime(),
+		})
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	if latestPath == "" {
-		if wantedSessionID != "" {
-			return nil, fmt.Errorf("could not find Codex session artifact for session %s", wantedSessionID)
+	return candidates, nil
+}
+
+func selectSessionCandidate(candidates []sessionCandidate, before sessionInventory, since time.Time, wantedSessionID string) (string, string, error) {
+	since = since.Add(-5 * time.Second)
+	if wantedSessionID != "" {
+		var latest *sessionCandidate
+		for index := range candidates {
+			candidate := &candidates[index]
+			if candidate.SessionID != wantedSessionID {
+				continue
+			}
+			if latest == nil || candidate.ModTime.After(latest.ModTime) {
+				latest = candidate
+			}
 		}
-		return nil, errors.New("could not find a recent Codex session artifact for this workspace")
+		if latest == nil {
+			return "", "", fmt.Errorf("could not find Codex session artifact for session %s", wantedSessionID)
+		}
+		return latest.Path, latest.SessionID, nil
 	}
-	lastAgentMessage, err := extractLastAgentMessage(latestPath)
+
+	changed := []sessionCandidate{}
+	for _, candidate := range candidates {
+		if candidate.ModTime.Before(since) {
+			continue
+		}
+		if before == nil {
+			changed = append(changed, candidate)
+			continue
+		}
+		beforeEntry, ok := before[candidate.Path]
+		if !ok || candidate.ModTime.After(beforeEntry.ModTime) {
+			changed = append(changed, candidate)
+		}
+	}
+	switch len(changed) {
+	case 0:
+		return "", "", errors.New("could not find a recent Codex session artifact for this workspace")
+	case 1:
+		return changed[0].Path, changed[0].SessionID, nil
+	default:
+		items := make([]string, 0, len(changed))
+		for _, candidate := range changed {
+			items = append(items, fmt.Sprintf("%s (%s)", candidate.SessionID, candidate.Path))
+		}
+		return "", "", fmt.Errorf("multiple Codex sessions changed in this workspace during the turn; refusing to guess: %s", strings.Join(items, ", "))
+	}
+}
+
+func loadSessionArtifact(path, sessionID string) (*sessionArtifact, error) {
+	lastAgentMessage, err := extractLastAgentMessage(path)
 	if err != nil {
 		return nil, err
 	}
-	initialUserGoal, err := extractInitialUserGoal(latestPath)
+	initialUserGoal, err := extractInitialUserGoal(path)
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(lastAgentMessage) == "" {
-		return nil, fmt.Errorf("session artifact %s does not contain a final assistant message", latestPath)
+		return nil, fmt.Errorf("session artifact %s does not contain a final assistant message", path)
 	}
 	return &sessionArtifact{
-		SessionID:        latestID,
-		SessionPath:      latestPath,
+		SessionID:        sessionID,
+		SessionPath:      path,
 		InitialUserGoal:  initialUserGoal,
 		LastAgentMessage: lastAgentMessage,
 	}, nil

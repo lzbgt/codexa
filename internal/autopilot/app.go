@@ -13,6 +13,8 @@ type App struct {
 	realCodex string
 }
 
+const maxProtocolRepairAttempts = 3
+
 func NewApp() (*App, error) {
 	return &App{}, nil
 }
@@ -318,7 +320,7 @@ func (a *App) runSessionTurn(inv Invocation, state *State, workspace, prompt, pr
 
 func (a *App) extractOrRepairReport(inv Invocation, state *State, dirs StateDirs, result *turnResult) (*AutoReport, *turnResult, error) {
 	current := result
-	for repairAttempt := 0; ; repairAttempt++ {
+	for repairAttempt := 0; repairAttempt <= maxProtocolRepairAttempts; repairAttempt++ {
 		rawMessage, err := os.ReadFile(current.LastMessagePath)
 		if err != nil {
 			return nil, nil, err
@@ -326,6 +328,9 @@ func (a *App) extractOrRepairReport(inv Invocation, state *State, dirs StateDirs
 		report, err := extractReport(string(rawMessage))
 		if err == nil {
 			return report, current, nil
+		}
+		if repairAttempt == maxProtocolRepairAttempts {
+			return nil, nil, fmt.Errorf("could not recover a valid autopilot report after %d repair attempts: %w", maxProtocolRepairAttempts, err)
 		}
 
 		fmt.Printf("\n=== Protocol Repair ===\nRepairing missing or invalid report for turn %d: %v\n", state.TurnIndex, err)
@@ -349,6 +354,7 @@ func (a *App) extractOrRepairReport(inv Invocation, state *State, dirs StateDirs
 		}
 		current = repairResult
 	}
+	return nil, nil, fmt.Errorf("unreachable protocol repair exit for turn %d", state.TurnIndex)
 }
 
 func executePostTurnActions(workspace string, dirs StateDirs, turnIndex int, report *AutoReport, before, after GitSnapshot) error {
@@ -382,18 +388,11 @@ func postTurnDecision(pauseSeconds int, report *AutoReport, queue *[]string) str
 		return report.AutoModeNext
 	}
 	fmt.Printf("Next turn decision in %ds. Press Enter now to open operator input mode.\n", pauseSeconds)
-	done := make(chan struct{}, 1)
-	go func() {
-		reader := bufio.NewReader(os.Stdin)
-		_, _ = reader.ReadString('\n')
-		done <- struct{}{}
-	}()
-	select {
-	case <-time.After(time.Duration(pauseSeconds) * time.Second):
-		return report.AutoModeNext
-	case <-done:
+	if waitForOperatorTrigger(time.Duration(pauseSeconds) * time.Second) {
+		consumeOperatorTrigger()
 		return operatorLoop(report, queue)
 	}
+	return report.AutoModeNext
 }
 
 func operatorLoop(report *AutoReport, queue *[]string) string {

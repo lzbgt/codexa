@@ -3,6 +3,7 @@ package autopilot
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,5 +82,81 @@ func TestExtractBootstrapUserGoalUsesOnlyNewMessages(t *testing.T) {
 	}
 	if goal != "continue the CI hardening work and keep going automatically" {
 		t.Fatalf("unexpected bootstrap goal: %q", goal)
+	}
+}
+
+func TestSelectSessionCandidatePrefersSingleChangedSession(t *testing.T) {
+	now := time.Date(2026, 3, 7, 2, 0, 0, 0, time.UTC)
+	candidates := []sessionCandidate{
+		{
+			SessionID: "session-a",
+			Path:      "/tmp/a.jsonl",
+			ModTime:   now.Add(2 * time.Second),
+		},
+		{
+			SessionID: "session-b",
+			Path:      "/tmp/b.jsonl",
+			ModTime:   now.Add(3 * time.Second),
+		},
+	}
+	before := sessionInventory{
+		"/tmp/a.jsonl": {SessionID: "session-a", ModTime: now.Add(2 * time.Second)},
+	}
+	path, sessionID, err := selectSessionCandidate(candidates, before, now, "")
+	if err != nil {
+		t.Fatalf("selectSessionCandidate returned error: %v", err)
+	}
+	if path != "/tmp/b.jsonl" || sessionID != "session-b" {
+		t.Fatalf("unexpected selection: %q %q", path, sessionID)
+	}
+}
+
+func TestSelectSessionCandidateRejectsAmbiguousChangedSessions(t *testing.T) {
+	now := time.Date(2026, 3, 7, 2, 0, 0, 0, time.UTC)
+	candidates := []sessionCandidate{
+		{
+			SessionID: "session-a",
+			Path:      "/tmp/a.jsonl",
+			ModTime:   now.Add(2 * time.Second),
+		},
+		{
+			SessionID: "session-b",
+			Path:      "/tmp/b.jsonl",
+			ModTime:   now.Add(3 * time.Second),
+		},
+	}
+	before := sessionInventory{
+		"/tmp/a.jsonl": {SessionID: "session-a", ModTime: now},
+		"/tmp/b.jsonl": {SessionID: "session-b", ModTime: now},
+	}
+	_, _, err := selectSessionCandidate(candidates, before, now, "")
+	if err == nil {
+		t.Fatal("expected ambiguity error, got nil")
+	}
+	if !strings.Contains(err.Error(), "refusing to guess") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSelectSessionCandidateUsesWantedSessionID(t *testing.T) {
+	now := time.Date(2026, 3, 7, 2, 0, 0, 0, time.UTC)
+	candidates := []sessionCandidate{
+		{
+			SessionID: "session-a",
+			Path:      "/tmp/a.jsonl",
+			ModTime:   now,
+		},
+		{
+			SessionID: "session-b",
+			Path:      "/tmp/b.jsonl",
+			ModTime:   now.Add(5 * time.Second),
+		},
+	}
+	path, sessionID, err := selectSessionCandidate(candidates, nil, now, "session-a")
+	if err != nil {
+		t.Fatalf("selectSessionCandidate returned error: %v", err)
+	}
+	if path != "/tmp/a.jsonl" || sessionID != "session-a" {
+		t.Fatalf("unexpected selection: %q %q", path, sessionID)
 	}
 }

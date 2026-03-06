@@ -86,11 +86,15 @@ func runInteractiveCodexTurn(realCodex, workspace, prompt, promptPath, lastMessa
 		return nil, err
 	}
 	startedAt := time.Now()
+	beforeInventory, err := snapshotSessionInventory(workspace)
+	if err != nil {
+		return nil, err
+	}
 	cmd := exec.Command(realCodex, codexArgs...)
 	cmd.Dir = workspace
 	if err := runAttachedInteractiveCommand(cmd); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			result, lookupErr := collectInteractiveTurnResult(workspace, startedAt, sessionIDHint, promptPath, lastMessagePath, exitErr.ExitCode())
+			result, lookupErr := collectInteractiveTurnResult(workspace, beforeInventory, startedAt, sessionIDHint, promptPath, lastMessagePath, exitErr.ExitCode())
 			if lookupErr != nil {
 				return nil, lookupErr
 			}
@@ -98,7 +102,7 @@ func runInteractiveCodexTurn(realCodex, workspace, prompt, promptPath, lastMessa
 		}
 		return nil, err
 	}
-	return collectInteractiveTurnResult(workspace, startedAt, sessionIDHint, promptPath, lastMessagePath, 0)
+	return collectInteractiveTurnResult(workspace, beforeInventory, startedAt, sessionIDHint, promptPath, lastMessagePath, 0)
 }
 
 func runAttachedInteractiveCommand(cmd *exec.Cmd) error {
@@ -153,8 +157,8 @@ func runAttachedInteractiveCommand(cmd *exec.Cmd) error {
 	return waitErr
 }
 
-func collectInteractiveTurnResult(workspace string, startedAt time.Time, sessionIDHint, promptPath, lastMessagePath string, returnCode int) (*turnResult, error) {
-	artifact, err := findLatestSessionArtifact(workspace, startedAt, sessionIDHint)
+func collectInteractiveTurnResult(workspace string, beforeInventory sessionInventory, startedAt time.Time, sessionIDHint, promptPath, lastMessagePath string, returnCode int) (*turnResult, error) {
+	artifact, err := findTurnSessionArtifact(workspace, beforeInventory, startedAt, sessionIDHint)
 	if err != nil {
 		return nil, err
 	}
