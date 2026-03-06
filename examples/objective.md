@@ -1,2 +1,1 @@
-Continue the highest-leverage concrete engineering work in this repository until no actionable task remains. Reweight tasks each turn using the current repo state, failing verification, and any operator prompts. Verify each changed area before stopping.
-
+Continue the highest-leverage concrete engineering work in this repository until no actionable task remains. Reweight tasks each turn using the current repo state, failing verification, and any operator prompts. If the turn leaves source-code changes dirty, either finish verification/commit/push during the turn or emit exact post_turn_actions for the wrapper to execute.

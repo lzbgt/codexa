@@ -23,6 +23,7 @@ The JSON must contain:
 - `reweighting_rationale`: explain why the top pending task remains top priority
 - `verification.status`: `passed`, `failed`, `partial`, or `not_run`
 - `verification.summary`: short verification summary
+- `post_turn_actions`: array of `{kind, command, description}` objects for the wrapper to execute after the turn when dirty source-code changes still need verification, commit, or push
 
 ## Rules
 
@@ -31,4 +32,4 @@ The JSON must contain:
 - Use `stop` only when no concrete task remains or operator input is genuinely required.
 - If operator guidance changed priorities, reflect that in `reweighting_rationale`.
 - Always include the footer, even when stopping.
-
+- If source-code changes remain dirty, provide exact `post_turn_actions` commands in verify -> commit -> push order.

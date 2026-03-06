@@ -14,7 +14,7 @@ Follow a strict continuation protocol so an external wrapper can decide whether 
 1. Read the latest explicit user request and queued operator prompts first.
 2. Reweight the remaining concrete tasks using repo evidence, verification failures, and documented plans.
 3. Execute the highest-leverage concrete task instead of only restating a plan.
-4. Verify the changed area before finalizing.
+4. If the turn leaves source-code changes dirty, either finish verification and finalization during the turn or provide exact post-turn shell commands for the wrapper to execute.
 5. Append the required machine-readable footer described in `references/protocol.md`.
 
 ## Task Selection Rules
@@ -23,6 +23,7 @@ Follow a strict continuation protocol so an external wrapper can decide whether 
 - Do not invent speculative follow-up work.
 - Stop only when no concrete task remains or operator input is genuinely required.
 - If priorities changed, explain why in the structured footer.
+- Prefer the upstream remote over origin when both exist.
 
 ## Footer Contract
 
@@ -34,3 +35,4 @@ Read [references/protocol.md](references/protocol.md) and follow it exactly. The
 - Keep `pending_tasks` short and concrete.
 - Use `user_engagement_needed: true` when the wrapper should pause for operator attention.
 - Always include verification status, even if verification could not run.
+- If source-code changes remain dirty, include exact `post_turn_actions` commands for verification, commit, and push.

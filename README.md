@@ -1,104 +1,109 @@
 # Codex Hybrid Autopilot
 
-`codex-hybrid-autopilot` is a thin wrapper around the official `codex` CLI. It keeps Codex itself unmodified, runs with the official `yolo` profile by default, shows the normal Codex output directly in your terminal, and adds a structured continuation loop between turns.
+`codex-hybrid-autopilot` is a Go wrapper around the official `codex` CLI. It keeps the upstream Codex binary unpatched, proxies normal CLI invocations straight through when autopilot is not applicable, and takes over only for turn-based flows that can be resumed safely.
 
-The wrapper is designed for the workflow discussed in this session:
+The wrapper is designed for this workflow:
 
-- visible Codex output instead of a hidden background daemon
-- hybrid execution using the official binary
-- automatic continuation when concrete work remains
-- occasional operator engagement by queueing free-form user prompts for the next turn
-- repo-local observability via saved prompts, last messages, and parsed reports
+- visible Codex output in the same terminal
+- argument forwarding shaped like the original `codex` CLI
+- automatic continuation across turns using `codex exec` and `codex exec resume`
+- occasional operator engagement between turns
+- repo-local observability under `.codex-autopilot/`
+- backend-decided verification, commit, and push via structured `post_turn_actions`
 
-## How it works
-
-1. The wrapper starts Codex with `codex -p yolo exec ...`.
-2. It writes the turn prompt to `.codex-autopilot/prompts/`.
-3. It asks Codex to write the final assistant message to `.codex-autopilot/messages/`.
-4. It parses a machine-readable JSON block from the final assistant message.
-5. It decides whether to continue automatically or pause for operator input.
-6. In `hybrid` mode it resumes the prior session with `codex exec resume --last`; in `stateless` mode it starts a fresh `exec` turn every time.
-
-This avoids patching the Codex client while still giving a loop that is observable and restartable.
-
-## Install
+## Build
 
 ```bash
 cd /Users/zongbaolu/work/codex-hybrid-autopilot
-python3 -m pip install -e .
+go build -o bin/codex-hybrid-autopilot ./cmd/codex-hybrid-autopilot
 ```
 
-## Run
+## Basic usage
+
+Compatible turn-based invocations are intercepted and resumed automatically:
 
 ```bash
-codex-hybrid-autopilot \
-  --workspace /path/to/target/repo \
-  --objective "Continue the highest-leverage engineering work until no concrete task remains." \
-  --codex-root-arg --search
+bin/codex-hybrid-autopilot -p yolo --search "Continue the highest-leverage work until no concrete task remains."
+bin/codex-hybrid-autopilot exec "Fix the top failing test and keep going."
+bin/codex-hybrid-autopilot exec resume --last "Continue from the current repo state."
 ```
 
-Important defaults:
+Pass-through invocations are forwarded directly to the real `codex` binary:
 
-- profile: `yolo`
-- strategy: `hybrid`
-- pause window after each turn: `10s`
-- state directory: `<workspace>/.codex-autopilot`
+```bash
+bin/codex-hybrid-autopilot --help
+bin/codex-hybrid-autopilot login
+bin/codex-hybrid-autopilot review
+```
+
+The wrapper resolves the real Codex binary from `PATH`. If the wrapper itself is named `codex`, set `CODEX_AUTOPILOT_REAL_BIN` to the upstream binary path.
+
+## How the turn loop works
+
+1. The wrapper runs the first compatible turn through `codex exec` or `codex exec resume`.
+2. It saves the turn prompt, last assistant message, and parsed report under `.codex-autopilot/`.
+3. It parses the required JSON footer between `AUTO_REPORT_JSON_BEGIN` and `AUTO_REPORT_JSON_END`.
+4. It executes any backend-provided `post_turn_actions` after the turn.
+5. It pauses briefly for operator input, then either resumes or stops.
+
+## Post-turn actions
+
+The wrapper does not hard-code repo-specific verification, commit, or push commands. Instead, Codex must provide exact shell commands in `post_turn_actions` whenever the turn leaves source-code changes that still need verification or finalization.
+
+Example:
+
+```json
+[
+  {"kind":"verify","command":"go test ./...","description":"Verify the repo."},
+  {"kind":"commit","command":"git add -A && git commit -m 'autopilot: finish parser fix'","description":"Commit the verified changes."},
+  {"kind":"push","command":"git push upstream HEAD","description":"Push to the preferred remote."}
+]
+```
+
+If a turn leaves source-code changes dirty and the report omits `post_turn_actions`, the wrapper stops instead of guessing.
 
 ## Operator engagement
 
-After each turn, the wrapper shows a short summary. If no input arrives during the pause window, it follows the agent's `continue` or `stop` decision. If you type anything, the wrapper enters operator input mode.
+After each turn, the wrapper prints a short summary. If the pause window expires, it follows the report's `auto_mode_next`. If you hit Enter before the timeout, the wrapper opens operator input mode.
 
 Operator input mode supports:
 
 - plain text: queue a user prompt for the next turn
-- `/show`: show queued prompts and pending tasks
-- `/clear`: clear queued prompts
+- `/show`: inspect the queued prompts
+- `/clear`: clear the prompt queue
 - `/stop`: stop after the current turn
-- `/help`: show the command list
-
-Press `Enter` on an empty line to continue with the queued prompts.
 
 ## Observability
 
-For each target workspace, the wrapper stores:
+Each workspace gets:
 
 - `.codex-autopilot/session_state.json`
 - `.codex-autopilot/prompts/turn-XXXX.md`
 - `.codex-autopilot/messages/turn-XXXX.md`
 - `.codex-autopilot/reports/turn-XXXX.json`
+- `.codex-autopilot/action-logs/turn-XXXX-YY-*.log`
 
-This gives a stable record of what was asked, what Codex answered, and why the wrapper continued or stopped.
+## Configuration
 
-## Protocol
+Optional workspace-local config lives at `.codex-autopilot/config.json`.
 
-The wrapper requires the final assistant message to include:
+Example:
 
-```text
-AUTO_REPORT_JSON_BEGIN
-{ ...json... }
-AUTO_REPORT_JSON_END
+```json
+{
+  "max_turns": 30,
+  "pause_window_seconds": 8,
+  "skill_hint": true,
+  "real_codex_bin": "/opt/homebrew/bin/codex"
+}
 ```
 
-The JSON includes:
+Environment overrides:
 
-- `auto_mode_next`
-- `summary`
-- `recommended_next_prompt`
-- `user_engagement_needed`
-- `pending_tasks`
-- `discovered_tasks`
-- `reweighting_rationale`
-- `verification`
-
-The optional companion skill in [skills/codex-session-autopilot](/Users/zongbaolu/work/codex-hybrid-autopilot/skills/codex-session-autopilot) documents the same contract for manual Codex sessions.
-
-## Limitations
-
-- In `hybrid` mode, session continuation uses `codex exec resume --last` unless you provide `--session-id`. Avoid running unrelated Codex sessions in the same workspace concurrently.
-- The wrapper is intentionally conservative: if the machine-readable report is missing or malformed, it stops instead of guessing.
-- Operator prompts are queued between turns, not injected while Codex is actively running.
+- `CODEX_AUTOPILOT_REAL_BIN`
+- `CODEX_AUTOPILOT_MAX_TURNS`
+- `CODEX_AUTOPILOT_PAUSE_SECONDS`
 
 ## Skill
 
-The repo includes an optional skill scaffold under [skills/codex-session-autopilot](/Users/zongbaolu/work/codex-hybrid-autopilot/skills/codex-session-autopilot). You can install or copy it into your Codex skills directory if you want the same continuation protocol available in normal manual sessions.
-
+The repo includes an optional companion skill under [skills/codex-session-autopilot](/Users/zongbaolu/work/codex-hybrid-autopilot/skills/codex-session-autopilot). The Go wrapper does not require it, but the skill makes the same protocol available in manual Codex sessions.
