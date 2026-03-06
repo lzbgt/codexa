@@ -1,12 +1,13 @@
 # Codex Hybrid Autopilot
 
-`codex-hybrid-autopilot` is a Go wrapper around the official `codex` CLI. It keeps the upstream Codex binary unpatched, proxies normal CLI invocations straight through when autopilot is not applicable, and takes over only for turn-based flows that can be resumed safely.
+`codex-hybrid-autopilot` is a Go wrapper around the official `codex` CLI. It keeps the upstream Codex binary unpatched, proxies normal CLI invocations straight through when autopilot is not applicable, and turns the interactive root CLI into an orchestrated session loop when autopilot is active.
 
 The wrapper is designed for this workflow:
 
 - visible Codex output in the same terminal
-- argument forwarding shaped like the original `codex` CLI
-- automatic continuation across turns using `codex exec` and `codex exec resume`
+- argument forwarding shaped like the original interactive `codex` CLI
+- attached interactive child sessions for root prompt and root `resume`
+- automatic continuation after the interactive child exits, using the last report from Codex's own session artifacts
 - occasional operator engagement between turns
 - repo-local observability under `.codex-autopilot/`
 - backend-decided verification, commit, and push via structured `post_turn_actions`
@@ -32,7 +33,7 @@ Example:
 ```bash
 cd /path/to/target/repo
 /Users/zongbaolu/work/codex-hybrid-autopilot/bin/codexa \
-  -p yolo \
+  --yolo \
   --search \
   "Continue the highest-leverage work until no concrete task remains."
 ```
@@ -41,10 +42,17 @@ For a longer step-by-step guide, see [USAGE.md](/Users/zongbaolu/work/codex-hybr
 
 ## Basic usage
 
-Compatible turn-based invocations are intercepted and resumed automatically:
+Interactive-style invocations are intercepted and orchestrated automatically:
 
 ```bash
-bin/codexa -p yolo --search "Continue the highest-leverage work until no concrete task remains."
+bin/codexa --yolo --search "Continue the highest-leverage work until no concrete task remains."
+bin/codexa --yolo resume --last
+bin/codexa --yolo resume --last "Continue after the blocker investigation."
+```
+
+Non-interactive `exec` forms are still supported:
+
+```bash
 bin/codexa exec "Fix the top failing test and keep going."
 bin/codexa exec resume --last "Continue from the current repo state."
 ```
@@ -52,11 +60,13 @@ bin/codexa exec resume --last "Continue from the current repo state."
 The wrapper currently intercepts these autopilot-compatible forms:
 
 - root prompt form: `codexa [root codex args] "prompt"`
+- root resume form: `codexa [root codex args] resume --last [prompt]`
 - `exec` form: `codexa [root codex args] exec [exec args] "prompt"`
-- `resume` form: `codexa [root codex args] resume --last "prompt"`
 - `exec resume` form: `codexa [root codex args] exec resume --last "prompt"`
 
 Everything else is passed through to the real `codex` binary unchanged.
+
+`--yolo` is a wrapper convenience alias for `-p yolo`. It is normalized before either autopilot interception or passthrough, so `codexa --yolo ...` behaves like a native top-level startup form.
 
 Pass-through invocations are forwarded directly to the real `codex` binary:
 
@@ -70,11 +80,16 @@ The wrapper resolves the real Codex binary from `PATH`. If the wrapper itself is
 
 ## How the turn loop works
 
-1. The wrapper runs the first compatible turn through `codex exec` or `codex exec resume`.
-2. It saves the turn prompt, last assistant message, and parsed report under `.codex-autopilot/`.
-3. It parses the required JSON footer between `AUTO_REPORT_JSON_BEGIN` and `AUTO_REPORT_JSON_END`.
-4. It executes any backend-provided `post_turn_actions` after the turn.
-5. It pauses briefly for operator input, then either resumes or stops.
+1. For root prompt and root `resume` entrypoints, the wrapper launches the real interactive `codex` child attached to your terminal.
+2. When that child exits, the wrapper reads the latest matching session JSONL under `~/.codex/sessions/` and extracts the last assistant message.
+3. It saves the turn prompt, extracted last assistant message, and parsed report under `.codex-autopilot/`.
+4. It parses the required JSON footer between `AUTO_REPORT_JSON_BEGIN` and `AUTO_REPORT_JSON_END`.
+5. It executes any backend-provided `post_turn_actions` after the turn.
+6. It pauses briefly for operator input, then either resumes the same interactive session or stops.
+
+When you start with `codexa --yolo resume --last` and omit a fresh prompt, the wrapper reuses the previously recorded objective from `.codex-autopilot/session_state.json`. If there is no existing wrapper state for that workspace yet, the wrapper stops and asks you to start once with an explicit project goal.
+
+For `exec` and `exec resume`, the wrapper keeps using non-interactive Codex commands and `-o/--output-last-message` capture as before.
 
 ## Post-turn actions
 

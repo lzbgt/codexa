@@ -17,6 +17,8 @@ type State struct {
 	TurnIndex          int         `json:"turn_index"`
 	SessionStarted     bool        `json:"session_started"`
 	ExplicitSessionID  string      `json:"explicit_session_id,omitempty"`
+	LastSessionID      string      `json:"last_session_id,omitempty"`
+	LastSessionPath    string      `json:"last_session_path,omitempty"`
 	PendingUserPrompts []string    `json:"pending_user_prompts"`
 	LastReport         *AutoReport `json:"last_report,omitempty"`
 	LastMessagePath    string      `json:"last_message_path,omitempty"`
@@ -75,6 +77,7 @@ func loadOrCreateState(path, workspace, prompt, strategy, explicitSessionID stri
 		}
 		if explicitSessionID != "" {
 			state.ExplicitSessionID = explicitSessionID
+			state.LastSessionID = explicitSessionID
 		}
 		return &state, nil
 	}
@@ -82,9 +85,13 @@ func loadOrCreateState(path, workspace, prompt, strategy, explicitSessionID stri
 		return nil, err
 	}
 	if prompt == "" {
-		return nil, errors.New("an initial prompt is required when no prior state exists")
+		return nil, errors.New("an initial project goal is required when no prior autopilot state exists; start with codexa --yolo \"<goal>\" before using resume-only autopilot flows")
 	}
-	return newState(workspace, prompt, strategy, explicitSessionID), nil
+	state := newState(workspace, prompt, strategy, explicitSessionID)
+	if explicitSessionID != "" {
+		state.LastSessionID = explicitSessionID
+	}
+	return state, nil
 }
 
 func (s *State) save(path string) error {

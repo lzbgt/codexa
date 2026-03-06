@@ -39,7 +39,7 @@ func (a *App) Run(args []string) int {
 		return 1
 	}
 	if inv.Mode == modePassthrough {
-		return runPassthrough(a.realCodex, args)
+		return runPassthrough(a.realCodex, inv.ForwardArgs)
 	}
 
 	stateDir := filepath.Join(inv.Workspace, cfg.StateDirName)
@@ -73,13 +73,28 @@ func (a *App) Run(args []string) int {
 			return 1
 		}
 
-		var cmdArgs []string
-		if !state.SessionStarted {
-			cmdArgs = inv.initialCommandArgs(messagePath)
+		var result *turnResult
+		if inv.Mode == modeInteractive || inv.Mode == modeInteractiveResume {
+			var cmdArgs []string
+			sessionHint := state.LastSessionID
+			if !state.SessionStarted {
+				cmdArgs = inv.initialInteractiveArgs(prompt)
+				if inv.ExplicitSessionID != "" {
+					sessionHint = inv.ExplicitSessionID
+				}
+			} else {
+				cmdArgs = inv.resumeInteractiveArgs(prompt, state.LastSessionID)
+			}
+			result, err = runInteractiveCodexTurn(a.realCodex, inv.Workspace, prompt, promptPath, messagePath, cmdArgs, sessionHint)
 		} else {
-			cmdArgs = inv.resumeCommandArgs(messagePath)
+			var cmdArgs []string
+			if !state.SessionStarted {
+				cmdArgs = inv.initialCommandArgs(messagePath)
+			} else {
+				cmdArgs = inv.resumeCommandArgs(messagePath)
+			}
+			result, err = runCodexTurn(a.realCodex, inv.Workspace, prompt, promptPath, cmdArgs)
 		}
-		result, err := runCodexTurn(a.realCodex, inv.Workspace, prompt, promptPath, cmdArgs)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			return 1
@@ -87,6 +102,12 @@ func (a *App) Run(args []string) int {
 		state.SessionStarted = true
 		state.PendingUserPrompts = nil
 		state.LastMessagePath = result.LastMessagePath
+		if result.SessionID != "" {
+			state.LastSessionID = result.SessionID
+		}
+		if result.SessionPath != "" {
+			state.LastSessionPath = result.SessionPath
+		}
 		if err := state.save(statePath); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			return 1

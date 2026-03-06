@@ -9,14 +9,17 @@ import (
 type invocationMode string
 
 const (
-	modePassthrough invocationMode = "passthrough"
-	modeExec        invocationMode = "exec"
-	modeResume      invocationMode = "resume"
+	modePassthrough       invocationMode = "passthrough"
+	modeExec              invocationMode = "exec"
+	modeResume            invocationMode = "resume"
+	modeInteractive       invocationMode = "interactive"
+	modeInteractiveResume invocationMode = "interactive_resume"
 )
 
 type Invocation struct {
 	Mode              invocationMode
 	OriginalArgs      []string
+	ForwardArgs       []string
 	Workspace         string
 	RootArgs          []string
 	InitialExecArgs   []string
@@ -50,6 +53,7 @@ func parseInvocation(args []string, cwd string) (Invocation, error) {
 	inv := Invocation{
 		Mode:         modePassthrough,
 		OriginalArgs: append([]string{}, args...),
+		ForwardArgs:  append([]string{}, args...),
 		Workspace:    cwd,
 	}
 	if len(args) == 0 {
@@ -61,6 +65,7 @@ func parseInvocation(args []string, cwd string) (Invocation, error) {
 		return inv, nil
 	}
 	inv.RootArgs = rootArgs
+	inv.ForwardArgs = append(append([]string{}, rootArgs...), args[next:]...)
 	if workspace != "" {
 		if !filepath.IsAbs(workspace) {
 			workspace = filepath.Join(cwd, workspace)
@@ -71,7 +76,7 @@ func parseInvocation(args []string, cwd string) (Invocation, error) {
 	if next >= len(args) {
 		return inv, nil
 	}
-	token := args[next]
+	token := inv.ForwardArgs[len(inv.RootArgs)]
 	if passthroughCommands[token] {
 		return inv, nil
 	}
@@ -88,7 +93,7 @@ func parseInvocation(args []string, cwd string) (Invocation, error) {
 		if prompt == "" {
 			return inv, nil
 		}
-		inv.Mode = modeExec
+		inv.Mode = modeInteractive
 		inv.Prompt = prompt
 		return inv, nil
 	}
@@ -97,19 +102,19 @@ func parseInvocation(args []string, cwd string) (Invocation, error) {
 func parseExecInvocation(inv Invocation, rest []string) (Invocation, error) {
 	flags, _, next, ok := parseFlags(rest, 0, execFlagSpec(), false)
 	if !ok {
-		return Invocation{Mode: modePassthrough, OriginalArgs: inv.OriginalArgs, Workspace: inv.Workspace}, nil
+		return passthroughInvocation(inv), nil
 	}
 	inv.InitialExecArgs = append(inv.InitialExecArgs, flags...)
 	inv.ResumeCompatible = append(inv.ResumeCompatible, filterResumeCompatible(flags)...)
 	if next >= len(rest) {
-		return Invocation{Mode: modePassthrough, OriginalArgs: inv.OriginalArgs, Workspace: inv.Workspace}, nil
+		return passthroughInvocation(inv), nil
 	}
 	if rest[next] == "resume" {
 		return parseExecResumeInvocation(inv, rest[next+1:])
 	}
 	prompt := strings.TrimSpace(strings.Join(rest[next:], " "))
 	if prompt == "" {
-		return Invocation{Mode: modePassthrough, OriginalArgs: inv.OriginalArgs, Workspace: inv.Workspace}, nil
+		return passthroughInvocation(inv), nil
 	}
 	inv.Mode = modeExec
 	inv.Prompt = prompt
@@ -117,21 +122,26 @@ func parseExecInvocation(inv Invocation, rest []string) (Invocation, error) {
 }
 
 func parseResumeInvocation(inv Invocation, rest []string) (Invocation, error) {
-	return parseExecResumeInvocation(inv, rest)
+	parsed, err := parseExecResumeInvocation(inv, rest)
+	if err != nil {
+		return parsed, err
+	}
+	switch parsed.Mode {
+	case modeResume:
+		parsed.Mode = modeInteractiveResume
+	}
+	return parsed, nil
 }
 
 func parseExecResumeInvocation(inv Invocation, rest []string) (Invocation, error) {
 	flags, _, next, ok := parseFlags(rest, 0, resumeFlagSpec(), false)
 	if !ok {
-		return Invocation{Mode: modePassthrough, OriginalArgs: inv.OriginalArgs, Workspace: inv.Workspace}, nil
+		return passthroughInvocation(inv), nil
 	}
 	inv.InitialExecArgs = append(inv.InitialExecArgs, flags...)
 	inv.ResumeCompatible = append(inv.ResumeCompatible, flags...)
 	if containsFlag(flags, "--last") {
 		prompt := strings.TrimSpace(strings.Join(rest[next:], " "))
-		if prompt == "" {
-			return Invocation{Mode: modePassthrough, OriginalArgs: inv.OriginalArgs, Workspace: inv.Workspace}, nil
-		}
 		inv.Mode = modeResume
 		inv.ResumeTarget = "--last"
 		inv.Prompt = prompt
@@ -139,16 +149,25 @@ func parseExecResumeInvocation(inv Invocation, rest []string) (Invocation, error
 	}
 	positional := rest[next:]
 	if len(positional) < 2 || !uuidish.MatchString(positional[0]) {
-		return Invocation{Mode: modePassthrough, OriginalArgs: inv.OriginalArgs, Workspace: inv.Workspace}, nil
+		return passthroughInvocation(inv), nil
 	}
 	inv.Mode = modeResume
 	inv.ResumeTarget = positional[0]
 	inv.ExplicitSessionID = positional[0]
 	inv.Prompt = strings.TrimSpace(strings.Join(positional[1:], " "))
 	if inv.Prompt == "" {
-		return Invocation{Mode: modePassthrough, OriginalArgs: inv.OriginalArgs, Workspace: inv.Workspace}, nil
+		return passthroughInvocation(inv), nil
 	}
 	return inv, nil
+}
+
+func passthroughInvocation(inv Invocation) Invocation {
+	return Invocation{
+		Mode:         modePassthrough,
+		OriginalArgs: append([]string{}, inv.OriginalArgs...),
+		ForwardArgs:  append([]string{}, inv.ForwardArgs...),
+		Workspace:    inv.Workspace,
+	}
 }
 
 type flagSpec struct {
@@ -253,6 +272,11 @@ func parseFlags(args []string, start int, spec flagSpec, allowWorkspace bool) ([
 			flagName = parts[0]
 			valueToken = parts[1]
 		}
+		if flagName == "--yolo" {
+			result = append(result, "-p", "yolo")
+			i++
+			continue
+		}
 		if spec.withValue[flagName] {
 			if valueToken != "" {
 				result = append(result, token)
@@ -336,5 +360,43 @@ func (inv Invocation) resumeCommandArgs(lastMessagePath string) []string {
 	}
 	args = append(args, inv.ResumeCompatible...)
 	args = append(args, "-o", lastMessagePath, "-")
+	return args
+}
+
+func (inv Invocation) initialInteractiveArgs(prompt string) []string {
+	args := append([]string{}, inv.RootArgs...)
+	switch inv.Mode {
+	case modeInteractive:
+		args = append(args, prompt)
+	case modeInteractiveResume:
+		args = append(args, "resume")
+		if inv.ResumeTarget != "" {
+			args = append(args, inv.ResumeTarget)
+		} else if inv.ExplicitSessionID != "" {
+			args = append(args, inv.ExplicitSessionID)
+		} else {
+			args = append(args, "--last")
+		}
+		if prompt != "" {
+			args = append(args, prompt)
+		}
+	}
+	return args
+}
+
+func (inv Invocation) resumeInteractiveArgs(prompt, sessionID string) []string {
+	args := append([]string{}, inv.RootArgs...)
+	args = append(args, "resume")
+	switch {
+	case sessionID != "":
+		args = append(args, sessionID)
+	case inv.ExplicitSessionID != "":
+		args = append(args, inv.ExplicitSessionID)
+	default:
+		args = append(args, "--last")
+	}
+	if prompt != "" {
+		args = append(args, prompt)
+	}
 	return args
 }

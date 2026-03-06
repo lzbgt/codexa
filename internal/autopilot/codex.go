@@ -7,12 +7,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type turnResult struct {
 	ReturnCode      int
 	PromptPath      string
 	LastMessagePath string
+	SessionID       string
+	SessionPath     string
 }
 
 func resolveRealCodex(config Config) (string, error) {
@@ -70,6 +73,47 @@ func runCodexTurn(realCodex, workspace, prompt, promptPath string, codexArgs []s
 		ReturnCode:      0,
 		PromptPath:      promptPath,
 		LastMessagePath: codexArgs[len(codexArgs)-2],
+	}, nil
+}
+
+func runInteractiveCodexTurn(realCodex, workspace, prompt, promptPath, lastMessagePath string, codexArgs []string, sessionIDHint string) (*turnResult, error) {
+	if err := os.WriteFile(promptPath, []byte(prompt), 0o644); err != nil {
+		return nil, err
+	}
+	startedAt := time.Now()
+	fmt.Printf("\n=== Starting Interactive Session ===\n%s %s\n", realCodex, strings.Join(quoteArgs(codexArgs), " "))
+	cmd := exec.Command(realCodex, codexArgs...)
+	cmd.Dir = workspace
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			result, lookupErr := collectInteractiveTurnResult(workspace, startedAt, sessionIDHint, promptPath, lastMessagePath, exitErr.ExitCode())
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			return result, nil
+		}
+		return nil, err
+	}
+	return collectInteractiveTurnResult(workspace, startedAt, sessionIDHint, promptPath, lastMessagePath, 0)
+}
+
+func collectInteractiveTurnResult(workspace string, startedAt time.Time, sessionIDHint, promptPath, lastMessagePath string, returnCode int) (*turnResult, error) {
+	artifact, err := findLatestSessionArtifact(workspace, startedAt, sessionIDHint)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(lastMessagePath, []byte(artifact.LastAgentMessage), 0o644); err != nil {
+		return nil, err
+	}
+	return &turnResult{
+		ReturnCode:      returnCode,
+		PromptPath:      promptPath,
+		LastMessagePath: lastMessagePath,
+		SessionID:       artifact.SessionID,
+		SessionPath:     artifact.SessionPath,
 	}, nil
 }
 

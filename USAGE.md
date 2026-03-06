@@ -28,19 +28,28 @@ export CODEX_AUTOPILOT_REAL_BIN=/opt/homebrew/bin/codex
 
 ## 3. Run the wrapper from the target repo
 
-Use a plain prompt if you want the wrapper to convert that into a turn-based `codex exec` flow:
+Use a plain prompt if you want the wrapper to start the real interactive Codex child and then orchestrate follow-up turns after that child exits:
 
 ```bash
 cd /path/to/target/repo
 /Users/zongbaolu/work/codex-hybrid-autopilot/bin/codexa \
-  -p yolo \
+  --yolo \
   --search \
   "Continue the highest-leverage engineering work until no concrete task remains."
 ```
 
-You can also start from explicit `exec` or `resume` forms:
+You can also start from interactive-style `resume` or explicit `exec` forms:
 
 ```bash
+/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codexa \
+  --yolo \
+  resume --last
+
+/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codexa \
+  --yolo \
+  resume --last \
+  "Continue from the current repo state."
+
 /Users/zongbaolu/work/codex-hybrid-autopilot/bin/codexa \
   exec \
   "Fix the top failing test and keep going."
@@ -55,9 +64,17 @@ You can also start from explicit `exec` or `resume` forms:
 Autopilot interception applies to:
 
 - root prompt form
+- root `resume --last` with or without a fresh prompt
 - `exec "prompt"`
-- `resume --last "prompt"`
 - `exec resume --last "prompt"`
+
+`--yolo` is a wrapper alias for `-p yolo`, so `codexa --yolo ...` is the preferred startup form when you want the wrapper to feel like the interactive CLI.
+
+The key runtime difference is:
+
+- root prompt and root `resume` forms launch the real interactive `codex` process attached to your terminal
+- after that child process exits, the wrapper reads Codex's session JSONL under `~/.codex/sessions/`, extracts the last assistant message, parses the autopilot report, and decides whether to respawn the session
+- `exec` forms stay fully non-interactive
 
 Pass-through applies to commands such as:
 
@@ -81,6 +98,9 @@ The wrapper stores runtime state in the current target repo:
 - `.codex-autopilot/action-logs/`
 
 This is where you inspect the previous turn prompt, the final assistant message, and the parsed JSON report.
+The wrapper also tracks the matched Codex session id and session file path there, but the authoritative interactive transcript remains in `~/.codex/sessions/`.
+
+If you resume with `codexa --yolo resume --last` and do not provide a new prompt, the wrapper reuses the existing objective from `.codex-autopilot/session_state.json`. On a brand new workspace, there is no stored objective yet, so start with an explicit goal first.
 
 ## 6. Operator engagement
 
@@ -133,5 +153,6 @@ export CODEX_AUTOPILOT_REAL_BIN=/opt/homebrew/bin/codex
 ## 9. Troubleshooting
 
 - If the wrapper passes a command straight through instead of entering autopilot mode, use one of the supported prompt or `exec` forms above.
+- If `codexa --yolo resume --last` errors on a fresh repo, start once with an explicit goal so the wrapper can persist the objective it should keep pursuing.
 - If the wrapper cannot resolve the real Codex binary, set `CODEX_AUTOPILOT_REAL_BIN`.
 - If the wrapper stops because the repo is still dirty, inspect `.codex-autopilot/reports/turn-XXXX.json` and check whether Codex emitted the expected `post_turn_actions`.
