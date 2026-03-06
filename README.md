@@ -127,11 +127,14 @@ Operator input mode supports:
 
 Each workspace gets:
 
+- `.codex-autopilot/runtime.json`
 - `.codex-autopilot/session_state.json`
 - `.codex-autopilot/prompts/turn-XXXX.md`
 - `.codex-autopilot/messages/turn-XXXX.md`
 - `.codex-autopilot/reports/turn-XXXX.json`
 - `.codex-autopilot/action-logs/turn-XXXX-YY-*.log`
+
+`runtime.json` is written immediately when `codexa` enters wrapper mode, before the first interactive child starts. If that file does not appear in the target repo right after `codexa --yolo ...` launches, the session was not started under wrapper control.
 
 ## Configuration
 

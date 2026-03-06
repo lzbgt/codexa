@@ -98,6 +98,7 @@ Those are forwarded directly to the real `codex` binary.
 
 The wrapper stores runtime state in the current target repo:
 
+- `.codex-autopilot/runtime.json`
 - `.codex-autopilot/session_state.json`
 - `.codex-autopilot/prompts/`
 - `.codex-autopilot/messages/`
@@ -106,6 +107,24 @@ The wrapper stores runtime state in the current target repo:
 
 This is where you inspect the previous turn prompt, the final assistant message, and the parsed JSON report.
 The wrapper also tracks the matched Codex session id and session file path there, but the authoritative interactive transcript remains in `~/.codex/sessions/`.
+
+`runtime.json` is the first file to check. It is created before the first interactive child starts and records:
+
+- whether wrapper mode is active
+- the workspace and state dir
+- the normalized mode and forwarded args
+- the real upstream `codex` binary path
+- the current wrapper phase such as `starting`, `bootstrapping`, `running_turn`, `decision_made`, `continuing`, or `stopped`
+
+Quick check:
+
+```bash
+cd /path/to/target/repo
+ls .codex-autopilot/runtime.json
+cat .codex-autopilot/runtime.json
+```
+
+If `runtime.json` does not exist immediately after `codexa --yolo ...` starts, that session was not launched under wrapper control.
 
 If you resume with `codexa --yolo resume --last` and do not provide a new prompt, the wrapper reuses the existing objective from `.codex-autopilot/session_state.json`. On a brand new workspace, there is no stored objective yet, so start with an explicit goal first.
 If the resumed session was originally created by native `codex` and there is still no wrapper state, that is now supported too: open it with `codexa --yolo resume --last` or `codexa --yolo resume <session-id>`, give Codex the first resumed prompt naturally, and after that turn exits the wrapper will bootstrap protocol state from that resumed session and continue automatically.
@@ -161,6 +180,7 @@ export CODEX_AUTOPILOT_REAL_BIN=/opt/homebrew/bin/codex
 ## 9. Troubleshooting
 
 - If the wrapper passes a command straight through instead of entering autopilot mode, use one of the supported prompt or `exec` forms above.
+- If a session appears to behave like plain `codex`, check `.codex-autopilot/runtime.json` first. No file means no wrapper engagement for that run.
 - If `codexa --yolo resume --last` is pointed at a native Codex session, give the resumed session one real prompt first; after that first resumed turn exits, the wrapper can bootstrap and continue automatically.
 - If the wrapper cannot resolve the real Codex binary, set `CODEX_AUTOPILOT_REAL_BIN`.
 - If the wrapper stops because the repo is still dirty, inspect `.codex-autopilot/reports/turn-XXXX.json` and check whether Codex emitted the expected `post_turn_actions`.

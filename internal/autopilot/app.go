@@ -48,43 +48,64 @@ func (a *App) Run(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
+	runtime := newRuntimeStatus(inv, dirs.Base, a.realCodex)
+	runtimePath := runtimeStatusPath(dirs)
+	if err := runtime.save(runtimePath); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	fail := func(err error) int {
+		runtime.setPhase("error", err.Error())
+		_ = runtime.save(runtimePath)
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
 	statePath := filepath.Join(dirs.Base, "session_state.json")
 	var state *State
 	if inv.Mode == modeInteractiveBare || shouldBootstrapInteractiveResume(inv) {
 		state, err = loadStateIfExists(statePath)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
+			return fail(err)
 		}
 	} else {
 		state, err = loadOrCreateState(statePath, inv.Workspace, inv.Prompt, "hybrid", inv.ExplicitSessionID)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
+			return fail(err)
 		}
 	}
 	if state != nil && inv.Mode != modeInteractive && inv.Mode != modeInteractiveResume && inv.Mode != modeInteractiveBare {
 		fmt.Printf("Workspace: %s\nState dir: %s\nReal codex: %s\nMode: %s\n", inv.Workspace, dirs.Base, a.realCodex, inv.Mode)
 	}
 	if state != nil {
+		runtime.trackState(state)
+		runtime.setPhase("ready", "wrapper state loaded before launching the next turn")
+		if err := runtime.save(runtimePath); err != nil {
+			return fail(err)
+		}
 		if err := state.save(statePath); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
+			return fail(err)
 		}
 	}
 
 	for {
 		if state == nil {
+			runtime.setPhase("bootstrapping", "launching first interactive session before autopilot state exists")
+			if err := runtime.save(runtimePath); err != nil {
+				return fail(err)
+			}
 			var bootstrapResult *turnResult
 			bootstrapResult, state, err = a.bootstrapInteractiveState(inv, dirs, statePath)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "error:", err)
-				return 1
+				return fail(err)
+			}
+			runtime.trackState(state)
+			runtime.setPhase("repair_or_decide", "first interactive session finished; extracting autopilot report")
+			if err := runtime.save(runtimePath); err != nil {
+				return fail(err)
 			}
 			report, repairedResult, err := a.extractOrRepairReport(inv, state, dirs, bootstrapResult)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "error:", err)
-				return 1
+				return fail(err)
 			}
 			state.LastReport = report
 			state.LastMessagePath = repairedResult.LastMessagePath
@@ -95,21 +116,26 @@ func (a *App) Run(args []string) int {
 			if repairedResult.SessionPath != "" {
 				state.LastSessionPath = repairedResult.SessionPath
 			}
+			runtime.trackState(state)
 			reportPath := filepath.Join(dirs.Reports, fmt.Sprintf("turn-%04d.json", state.TurnIndex))
 			if err := writeJSON(reportPath, report); err != nil {
-				fmt.Fprintln(os.Stderr, "error:", err)
-				return 1
+				return fail(err)
 			}
 			if err := state.save(statePath); err != nil {
-				fmt.Fprintln(os.Stderr, "error:", err)
-				return 1
+				return fail(err)
 			}
 			decision := postTurnDecision(cfg.PauseWindowSeconds, report, &state.PendingUserPrompts)
+			runtime.LastDecision = decision
+			runtime.setPhase("decision_made", fmt.Sprintf("turn %d completed with decision %s", state.TurnIndex, decision))
 			if err := state.save(statePath); err != nil {
-				fmt.Fprintln(os.Stderr, "error:", err)
-				return 1
+				return fail(err)
+			}
+			if err := runtime.save(runtimePath); err != nil {
+				return fail(err)
 			}
 			if decision == "stop" {
+				runtime.setPhase("stopped", fmt.Sprintf("wrapper stopped after turn %d because the backend decision was stop", state.TurnIndex))
+				_ = runtime.save(runtimePath)
 				fmt.Printf("\n=== Wrapper Stop ===\nStopping after turn %d. Last report: %s\n", state.TurnIndex, reportPath)
 				return 0
 			}
@@ -117,6 +143,12 @@ func (a *App) Run(args []string) int {
 		}
 
 		state.TurnIndex++
+		runtime.trackState(state)
+		runtime.LastTurnIndex = state.TurnIndex
+		runtime.setPhase("running_turn", fmt.Sprintf("starting turn %d", state.TurnIndex))
+		if err := runtime.save(runtimePath); err != nil {
+			return fail(err)
+		}
 		snapshotBefore := captureGitSnapshot(inv.Workspace)
 		prompt := buildPrompt(state, state.LastReport, snapshotBefore, cfg.SkillHint)
 		promptPath := filepath.Join(dirs.Prompts, fmt.Sprintf("turn-%04d.md", state.TurnIndex))
@@ -124,14 +156,12 @@ func (a *App) Run(args []string) int {
 		state.LastPromptPath = promptPath
 		state.LastMessagePath = ""
 		if err := state.save(statePath); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
+			return fail(err)
 		}
 
 		result, err := a.runSessionTurn(inv, state, inv.Workspace, prompt, promptPath, messagePath)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
+			return fail(err)
 		}
 		state.SessionStarted = true
 		state.PendingUserPrompts = nil
@@ -142,19 +172,24 @@ func (a *App) Run(args []string) int {
 		if result.SessionPath != "" {
 			state.LastSessionPath = result.SessionPath
 		}
+		runtime.trackState(state)
+		runtime.setPhase("repair_or_decide", fmt.Sprintf("turn %d finished; extracting autopilot report", state.TurnIndex))
+		if err := runtime.save(runtimePath); err != nil {
+			return fail(err)
+		}
 		if err := state.save(statePath); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
+			return fail(err)
 		}
 		if result.ReturnCode != 0 {
+			runtime.setPhase("error", fmt.Sprintf("codex exited with status %d", result.ReturnCode))
+			_ = runtime.save(runtimePath)
 			fmt.Fprintf(os.Stderr, "codex exited with status %d\n", result.ReturnCode)
 			return result.ReturnCode
 		}
 
 		report, result, err := a.extractOrRepairReport(inv, state, dirs, result)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
+			return fail(err)
 		}
 		state.LastMessagePath = result.LastMessagePath
 		state.LastPromptPath = result.PromptPath
@@ -164,31 +199,39 @@ func (a *App) Run(args []string) int {
 		if result.SessionPath != "" {
 			state.LastSessionPath = result.SessionPath
 		}
+		runtime.trackState(state)
 		reportPath := filepath.Join(dirs.Reports, fmt.Sprintf("turn-%04d.json", state.TurnIndex))
 		if err := writeJSON(reportPath, report); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
+			return fail(err)
 		}
 		state.LastReport = report
 		if err := state.save(statePath); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
+			return fail(err)
 		}
 
 		snapshotAfter := captureGitSnapshot(inv.Workspace)
 		if err := executePostTurnActions(inv.Workspace, dirs, state.TurnIndex, report, snapshotBefore, snapshotAfter); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
+			return fail(err)
 		}
 
 		decision := postTurnDecision(cfg.PauseWindowSeconds, report, &state.PendingUserPrompts)
+		runtime.LastDecision = decision
+		runtime.setPhase("decision_made", fmt.Sprintf("turn %d completed with decision %s", state.TurnIndex, decision))
 		if err := state.save(statePath); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
+			return fail(err)
+		}
+		if err := runtime.save(runtimePath); err != nil {
+			return fail(err)
 		}
 		if decision == "stop" {
+			runtime.setPhase("stopped", fmt.Sprintf("wrapper stopped after turn %d because the backend decision was stop", state.TurnIndex))
+			_ = runtime.save(runtimePath)
 			fmt.Printf("\n=== Wrapper Stop ===\nStopping after turn %d. Last report: %s\n", state.TurnIndex, reportPath)
 			return 0
+		}
+		runtime.setPhase("continuing", fmt.Sprintf("wrapper will continue after turn %d", state.TurnIndex))
+		if err := runtime.save(runtimePath); err != nil {
+			return fail(err)
 		}
 	}
 }
