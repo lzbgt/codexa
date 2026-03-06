@@ -54,7 +54,9 @@ func (a *App) Run(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	fmt.Printf("Workspace: %s\nState dir: %s\nReal codex: %s\nMode: %s\n", inv.Workspace, dirs.Base, a.realCodex, inv.Mode)
+	if inv.Mode != modeInteractive && inv.Mode != modeInteractiveResume {
+		fmt.Printf("Workspace: %s\nState dir: %s\nReal codex: %s\nMode: %s\n", inv.Workspace, dirs.Base, a.realCodex, inv.Mode)
+	}
 	if err := state.save(statePath); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1

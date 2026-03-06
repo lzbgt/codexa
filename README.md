@@ -6,7 +6,7 @@ The wrapper is designed for this workflow:
 
 - visible Codex output in the same terminal
 - argument forwarding shaped like the original interactive `codex` CLI
-- attached interactive child sessions for root prompt and root `resume`
+- PTY-backed interactive child sessions for root prompt and root `resume`
 - automatic continuation after the interactive child exits, using the last report from Codex's own session artifacts
 - occasional operator engagement between turns
 - repo-local observability under `.codex-autopilot/`

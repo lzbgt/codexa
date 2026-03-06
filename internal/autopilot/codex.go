@@ -5,9 +5,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
+
+	"github.com/creack/pty"
+	"golang.org/x/term"
 )
 
 type turnResult struct {
@@ -81,13 +86,9 @@ func runInteractiveCodexTurn(realCodex, workspace, prompt, promptPath, lastMessa
 		return nil, err
 	}
 	startedAt := time.Now()
-	fmt.Printf("\n=== Starting Interactive Session ===\n%s %s\n", realCodex, strings.Join(quoteArgs(codexArgs), " "))
 	cmd := exec.Command(realCodex, codexArgs...)
 	cmd.Dir = workspace
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := runAttachedInteractiveCommand(cmd); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			result, lookupErr := collectInteractiveTurnResult(workspace, startedAt, sessionIDHint, promptPath, lastMessagePath, exitErr.ExitCode())
 			if lookupErr != nil {
@@ -98,6 +99,58 @@ func runInteractiveCodexTurn(realCodex, workspace, prompt, promptPath, lastMessa
 		return nil, err
 	}
 	return collectInteractiveTurnResult(workspace, startedAt, sessionIDHint, promptPath, lastMessagePath, 0)
+}
+
+func runAttachedInteractiveCommand(cmd *exec.Cmd) error {
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return err
+	}
+	defer ptmx.Close()
+
+	if err := pty.InheritSize(os.Stdin, ptmx); err != nil {
+		return err
+	}
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+	defer signal.Stop(winch)
+	go func() {
+		for range winch {
+			_ = pty.InheritSize(os.Stdin, ptmx)
+		}
+	}()
+	winch <- syscall.SIGWINCH
+
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = term.Restore(int(os.Stdin.Fd()), oldState)
+	}()
+
+	copyDone := make(chan struct{}, 2)
+	go func() {
+		_, _ = io.Copy(os.Stdout, ptmx)
+		copyDone <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(ptmx, os.Stdin)
+		copyDone <- struct{}{}
+	}()
+
+	waitErr := cmd.Wait()
+	_ = ptmx.Close()
+	<-copyDone
+	<-copyDone
+	return waitErr
 }
 
 func collectInteractiveTurnResult(workspace string, startedAt time.Time, sessionIDHint, promptPath, lastMessagePath string, returnCode int) (*turnResult, error) {
