@@ -60,7 +60,7 @@ func (a *App) Run(args []string) int {
 		return 1
 	}
 
-	for state.TurnIndex < cfg.MaxTurns {
+	for {
 		state.TurnIndex++
 		snapshotBefore := captureGitSnapshot(inv.Workspace)
 		prompt := buildPrompt(state, state.LastReport, snapshotBefore, cfg.SkillHint)
@@ -133,8 +133,6 @@ func (a *App) Run(args []string) int {
 			return 0
 		}
 	}
-	fmt.Printf("\n=== Max Turns Reached ===\nStopped after %d turns.\n", cfg.MaxTurns)
-	return 0
 }
 
 func executePostTurnActions(workspace string, dirs StateDirs, turnIndex int, report *AutoReport, before, after GitSnapshot) error {

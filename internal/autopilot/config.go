@@ -9,7 +9,6 @@ import (
 )
 
 type Config struct {
-	MaxTurns           int    `json:"max_turns"`
 	PauseWindowSeconds int    `json:"pause_window_seconds"`
 	SkillHint          bool   `json:"skill_hint"`
 	StateDirName       string `json:"state_dir_name"`
@@ -18,7 +17,6 @@ type Config struct {
 
 func defaultConfig() Config {
 	return Config{
-		MaxTurns:           20,
 		PauseWindowSeconds: 10,
 		SkillHint:          true,
 		StateDirName:       ".codex-autopilot",
@@ -35,13 +33,6 @@ func loadConfig(workspace string) (Config, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Config{}, err
 	}
-	if value := os.Getenv("CODEX_AUTOPILOT_MAX_TURNS"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.MaxTurns = parsed
-	}
 	if value := os.Getenv("CODEX_AUTOPILOT_PAUSE_SECONDS"); value != "" {
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
@@ -51,9 +42,6 @@ func loadConfig(workspace string) (Config, error) {
 	}
 	if value := os.Getenv("CODEX_AUTOPILOT_REAL_BIN"); value != "" {
 		cfg.RealCodexBin = value
-	}
-	if cfg.MaxTurns <= 0 {
-		cfg.MaxTurns = 1
 	}
 	if cfg.PauseWindowSeconds < 0 {
 		cfg.PauseWindowSeconds = 0

@@ -6,7 +6,7 @@ This guide shows the normal way to run the Go wrapper against a target repositor
 
 ```bash
 cd /Users/zongbaolu/work/codex-hybrid-autopilot
-go build -o bin/codex-hybrid-autopilot ./cmd/codex-hybrid-autopilot
+go build -o bin/codexa ./cmd/codex-hybrid-autopilot
 ```
 
 ## 2. Verify the real Codex binary
@@ -32,7 +32,7 @@ Use a plain prompt if you want the wrapper to convert that into a turn-based `co
 
 ```bash
 cd /path/to/target/repo
-/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codex-hybrid-autopilot \
+/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codexa \
   -p yolo \
   --search \
   "Continue the highest-leverage engineering work until no concrete task remains."
@@ -41,11 +41,11 @@ cd /path/to/target/repo
 You can also start from explicit `exec` or `resume` forms:
 
 ```bash
-/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codex-hybrid-autopilot \
+/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codexa \
   exec \
   "Fix the top failing test and keep going."
 
-/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codex-hybrid-autopilot \
+/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codexa \
   exec resume --last \
   "Continue from the current repo state."
 ```
@@ -117,7 +117,6 @@ Example:
 
 ```json
 {
-  "max_turns": 30,
   "pause_window_seconds": 8,
   "skill_hint": true,
   "real_codex_bin": "/opt/homebrew/bin/codex"
@@ -127,7 +126,6 @@ Example:
 Equivalent environment overrides:
 
 ```bash
-export CODEX_AUTOPILOT_MAX_TURNS=30
 export CODEX_AUTOPILOT_PAUSE_SECONDS=8
 export CODEX_AUTOPILOT_REAL_BIN=/opt/homebrew/bin/codex
 ```

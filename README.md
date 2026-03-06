@@ -15,10 +15,10 @@ The wrapper is designed for this workflow:
 
 ```bash
 cd /Users/zongbaolu/work/codex-hybrid-autopilot
-go build -o bin/codex-hybrid-autopilot ./cmd/codex-hybrid-autopilot
+go build -o bin/codexa ./cmd/codex-hybrid-autopilot
 ```
 
-The built binary lives at [bin/codex-hybrid-autopilot](/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codex-hybrid-autopilot).
+The built binary lives at [bin/codexa](/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codexa).
 
 ## Quick start
 
@@ -31,7 +31,7 @@ Example:
 
 ```bash
 cd /path/to/target/repo
-/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codex-hybrid-autopilot \
+/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codexa \
   -p yolo \
   --search \
   "Continue the highest-leverage work until no concrete task remains."
@@ -44,26 +44,26 @@ For a longer step-by-step guide, see [USAGE.md](/Users/zongbaolu/work/codex-hybr
 Compatible turn-based invocations are intercepted and resumed automatically:
 
 ```bash
-bin/codex-hybrid-autopilot -p yolo --search "Continue the highest-leverage work until no concrete task remains."
-bin/codex-hybrid-autopilot exec "Fix the top failing test and keep going."
-bin/codex-hybrid-autopilot exec resume --last "Continue from the current repo state."
+bin/codexa -p yolo --search "Continue the highest-leverage work until no concrete task remains."
+bin/codexa exec "Fix the top failing test and keep going."
+bin/codexa exec resume --last "Continue from the current repo state."
 ```
 
 The wrapper currently intercepts these autopilot-compatible forms:
 
-- root prompt form: `codex-hybrid-autopilot [root codex args] "prompt"`
-- `exec` form: `codex-hybrid-autopilot [root codex args] exec [exec args] "prompt"`
-- `resume` form: `codex-hybrid-autopilot [root codex args] resume --last "prompt"`
-- `exec resume` form: `codex-hybrid-autopilot [root codex args] exec resume --last "prompt"`
+- root prompt form: `codexa [root codex args] "prompt"`
+- `exec` form: `codexa [root codex args] exec [exec args] "prompt"`
+- `resume` form: `codexa [root codex args] resume --last "prompt"`
+- `exec resume` form: `codexa [root codex args] exec resume --last "prompt"`
 
 Everything else is passed through to the real `codex` binary unchanged.
 
 Pass-through invocations are forwarded directly to the real `codex` binary:
 
 ```bash
-bin/codex-hybrid-autopilot --help
-bin/codex-hybrid-autopilot login
-bin/codex-hybrid-autopilot review
+bin/codexa --help
+bin/codexa login
+bin/codexa review
 ```
 
 The wrapper resolves the real Codex binary from `PATH`. If the wrapper itself is named `codex`, set `CODEX_AUTOPILOT_REAL_BIN` to the upstream binary path.
@@ -121,7 +121,6 @@ Example:
 
 ```json
 {
-  "max_turns": 30,
   "pause_window_seconds": 8,
   "skill_hint": true,
   "real_codex_bin": "/opt/homebrew/bin/codex"
@@ -131,7 +130,6 @@ Example:
 Environment overrides:
 
 - `CODEX_AUTOPILOT_REAL_BIN`
-- `CODEX_AUTOPILOT_MAX_TURNS`
 - `CODEX_AUTOPILOT_PAUSE_SECONDS`
 
 ## Skill
