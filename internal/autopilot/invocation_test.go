@@ -15,6 +15,19 @@ func TestParseRootPromptInvocation(t *testing.T) {
 	}
 }
 
+func TestParseBareInteractiveInvocation(t *testing.T) {
+	inv, err := parseInvocation([]string{"--yolo", "--search"}, "/tmp/repo")
+	if err != nil {
+		t.Fatalf("parseInvocation returned error: %v", err)
+	}
+	if inv.Mode != modeInteractiveBare {
+		t.Fatalf("expected interactive bare mode, got %s", inv.Mode)
+	}
+	if inv.Prompt != "" {
+		t.Fatalf("expected empty prompt, got %q", inv.Prompt)
+	}
+}
+
 func TestParseYoloAliasInvocation(t *testing.T) {
 	inv, err := parseInvocation([]string{"--yolo", "--search", "fix", "the", "tests"}, "/tmp/repo")
 	if err != nil {

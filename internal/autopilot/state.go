@@ -63,12 +63,11 @@ func newState(workspace, prompt, strategy, explicitSessionID string) *State {
 }
 
 func loadOrCreateState(path, workspace, prompt, strategy, explicitSessionID string) (*State, error) {
-	data, err := os.ReadFile(path)
-	if err == nil {
-		var state State
-		if err := json.Unmarshal(data, &state); err != nil {
-			return nil, err
-		}
+	state, err := loadStateIfExists(path)
+	if err != nil {
+		return nil, err
+	}
+	if state != nil {
 		if prompt != "" && prompt != state.InitialPrompt {
 			return newState(workspace, prompt, strategy, explicitSessionID), nil
 		}
@@ -79,19 +78,31 @@ func loadOrCreateState(path, workspace, prompt, strategy, explicitSessionID stri
 			state.ExplicitSessionID = explicitSessionID
 			state.LastSessionID = explicitSessionID
 		}
-		return &state, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+		return state, nil
 	}
 	if prompt == "" {
 		return nil, errors.New("an initial project goal is required when no prior autopilot state exists; start with codexa --yolo \"<goal>\" before using resume-only autopilot flows")
 	}
-	state := newState(workspace, prompt, strategy, explicitSessionID)
+	state = newState(workspace, prompt, strategy, explicitSessionID)
 	if explicitSessionID != "" {
 		state.LastSessionID = explicitSessionID
 	}
 	return state, nil
+}
+
+func loadStateIfExists(path string) (*State, error) {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		var state State
+		if err := json.Unmarshal(data, &state); err != nil {
+			return nil, err
+		}
+		return &state, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return nil, err
 }
 
 func (s *State) save(path string) error {

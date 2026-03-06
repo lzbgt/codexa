@@ -15,6 +15,7 @@ import (
 type sessionArtifact struct {
 	SessionID        string
 	SessionPath      string
+	InitialUserGoal  string
 	LastAgentMessage string
 }
 
@@ -72,12 +73,17 @@ func findLatestSessionArtifact(workspace string, since time.Time, wantedSessionI
 	if err != nil {
 		return nil, err
 	}
+	initialUserGoal, err := extractInitialUserGoal(latestPath)
+	if err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(lastAgentMessage) == "" {
 		return nil, fmt.Errorf("session artifact %s does not contain a final assistant message", latestPath)
 	}
 	return &sessionArtifact{
 		SessionID:        latestID,
 		SessionPath:      latestPath,
+		InitialUserGoal:  initialUserGoal,
 		LastAgentMessage: lastAgentMessage,
 	}, nil
 }
@@ -169,6 +175,50 @@ func extractLastAgentMessage(path string) (string, error) {
 	return lastMessage, nil
 }
 
+func extractInitialUserGoal(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	scanner := newSessionScanner(file)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var envelope struct {
+			Type    string          `json:"type"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(line, &envelope); err != nil {
+			continue
+		}
+		switch envelope.Type {
+		case "event_msg":
+			var payload struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			}
+			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+				continue
+			}
+			if payload.Type == "user_message" {
+				goal := normalizeUserGoal(payload.Message)
+				if goal != "" {
+					return goal, nil
+				}
+			}
+		case "response_item":
+			goal, ok := parseUserResponseItem(envelope.Payload)
+			if ok && goal != "" {
+				return goal, nil
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", nil
+}
+
 func parseAssistantResponseItem(payload json.RawMessage) (string, bool) {
 	var item struct {
 		Type    string `json:"type"`
@@ -191,6 +241,44 @@ func parseAssistantResponseItem(payload json.RawMessage) (string, bool) {
 		}
 	}
 	return strings.Join(parts, "\n"), true
+}
+
+func parseUserResponseItem(payload json.RawMessage) (string, bool) {
+	var item struct {
+		Type    string `json:"type"`
+		Role    string `json:"role"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(payload, &item); err != nil {
+		return "", false
+	}
+	if item.Type != "message" || item.Role != "user" {
+		return "", false
+	}
+	parts := make([]string, 0, len(item.Content))
+	for _, content := range item.Content {
+		if content.Text != "" {
+			parts = append(parts, content.Text)
+		}
+	}
+	return normalizeUserGoal(strings.Join(parts, "\n")), true
+}
+
+func normalizeUserGoal(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	if strings.HasPrefix(text, "# AGENTS.md instructions for ") || strings.HasPrefix(text, "<environment_context>") {
+		return ""
+	}
+	if strings.HasPrefix(text, "<turn_aborted>") {
+		return ""
+	}
+	return text
 }
 
 func newSessionScanner(reader io.Reader) *bufio.Scanner {

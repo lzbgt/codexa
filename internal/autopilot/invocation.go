@@ -13,6 +13,7 @@ const (
 	modeExec              invocationMode = "exec"
 	modeResume            invocationMode = "resume"
 	modeInteractive       invocationMode = "interactive"
+	modeInteractiveBare   invocationMode = "interactive_bare"
 	modeInteractiveResume invocationMode = "interactive_resume"
 )
 
@@ -74,6 +75,7 @@ func parseInvocation(args []string, cwd string) (Invocation, error) {
 	}
 
 	if next >= len(args) {
+		inv.Mode = modeInteractiveBare
 		return inv, nil
 	}
 	token := inv.ForwardArgs[len(inv.RootArgs)]

@@ -42,6 +42,9 @@ You can also start from interactive-style `resume` or explicit `exec` forms:
 
 ```bash
 /Users/zongbaolu/work/codex-hybrid-autopilot/bin/codexa \
+  --yolo
+
+/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codexa \
   --yolo \
   resume --last
 
@@ -63,6 +66,7 @@ You can also start from interactive-style `resume` or explicit `exec` forms:
 
 Autopilot interception applies to:
 
+- bare root interactive startup
 - root prompt form
 - root `resume --last` with or without a fresh prompt
 - `exec "prompt"`
@@ -73,6 +77,7 @@ Autopilot interception applies to:
 The key runtime difference is:
 
 - root prompt and root `resume` forms launch the real interactive `codex` process attached to your terminal
+- bare `codexa --yolo` also launches the real interactive child; when that first session exits, the wrapper derives the objective from the first user message in the session artifact and continues under autopilot
 - that attached child now runs behind a PTY bridge, so fullscreen/inline terminal behavior is much closer to native `codex`
 - after that child process exits, the wrapper reads Codex's session JSONL under `~/.codex/sessions/`, extracts the last assistant message, parses the autopilot report, and decides whether to respawn the session
 - if the assistant forgot the `AUTO_REPORT_JSON` footer, the wrapper auto-resumes the same session with a repair prompt and only proceeds once a valid report is recovered

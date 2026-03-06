@@ -45,6 +45,7 @@ For a longer step-by-step guide, see [USAGE.md](/Users/zongbaolu/work/codex-hybr
 Interactive-style invocations are intercepted and orchestrated automatically:
 
 ```bash
+bin/codexa --yolo
 bin/codexa --yolo --search "Continue the highest-leverage work until no concrete task remains."
 bin/codexa --yolo resume --last
 bin/codexa --yolo resume --last "Continue after the blocker investigation."
@@ -60,6 +61,7 @@ bin/codexa exec resume --last "Continue from the current repo state."
 The wrapper currently intercepts these autopilot-compatible forms:
 
 - root prompt form: `codexa [root codex args] "prompt"`
+- bare interactive root form: `codexa [root codex args]`
 - root resume form: `codexa [root codex args] resume --last [prompt]`
 - `exec` form: `codexa [root codex args] exec [exec args] "prompt"`
 - `exec resume` form: `codexa [root codex args] exec resume --last "prompt"`
@@ -80,12 +82,13 @@ The wrapper resolves the real Codex binary from `PATH`. If the wrapper itself is
 
 ## How the turn loop works
 
-1. For root prompt and root `resume` entrypoints, the wrapper launches the real interactive `codex` child attached to your terminal.
+1. For bare root, root prompt, and root `resume` entrypoints, the wrapper launches the real interactive `codex` child attached to your terminal.
 2. When that child exits, the wrapper reads the latest matching session JSONL under `~/.codex/sessions/` and extracts the last assistant message.
-3. It saves the turn prompt, extracted last assistant message, and parsed report under `.codex-autopilot/`.
-4. It parses the required JSON footer between `AUTO_REPORT_JSON_BEGIN` and `AUTO_REPORT_JSON_END`.
-5. It executes any backend-provided `post_turn_actions` after the turn.
-6. It pauses briefly for operator input, then either resumes the same interactive session or stops.
+3. If the first launch was bare `codexa [root args]`, the wrapper derives the project objective from that finished session's first user message and bootstraps `.codex-autopilot/session_state.json` from it.
+4. It saves the turn prompt, extracted last assistant message, and parsed report under `.codex-autopilot/`.
+5. It parses the required JSON footer between `AUTO_REPORT_JSON_BEGIN` and `AUTO_REPORT_JSON_END`.
+6. It executes any backend-provided `post_turn_actions` after the turn.
+7. It pauses briefly for operator input, then either resumes the same interactive session or stops.
 
 If Codex forgets the JSON footer or emits an invalid report, the wrapper immediately resumes the same session with a protocol-repair prompt instead of stopping. The next real turn only starts after a valid report has been recovered.
 

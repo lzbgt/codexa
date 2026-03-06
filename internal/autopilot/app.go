@@ -49,20 +49,73 @@ func (a *App) Run(args []string) int {
 		return 1
 	}
 	statePath := filepath.Join(dirs.Base, "session_state.json")
-	state, err := loadOrCreateState(statePath, inv.Workspace, inv.Prompt, "hybrid", inv.ExplicitSessionID)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
+	var state *State
+	if inv.Mode == modeInteractiveBare {
+		state, err = loadStateIfExists(statePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+	} else {
+		state, err = loadOrCreateState(statePath, inv.Workspace, inv.Prompt, "hybrid", inv.ExplicitSessionID)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
 	}
-	if inv.Mode != modeInteractive && inv.Mode != modeInteractiveResume {
+	if state != nil && inv.Mode != modeInteractive && inv.Mode != modeInteractiveResume && inv.Mode != modeInteractiveBare {
 		fmt.Printf("Workspace: %s\nState dir: %s\nReal codex: %s\nMode: %s\n", inv.Workspace, dirs.Base, a.realCodex, inv.Mode)
 	}
-	if err := state.save(statePath); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
+	if state != nil {
+		if err := state.save(statePath); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
 	}
 
 	for {
+		if state == nil {
+			var bootstrapResult *turnResult
+			bootstrapResult, state, err = a.bootstrapBareInteractiveState(inv, dirs, statePath)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				return 1
+			}
+			report, repairedResult, err := a.extractOrRepairReport(inv, state, dirs, bootstrapResult)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				return 1
+			}
+			state.LastReport = report
+			state.LastMessagePath = repairedResult.LastMessagePath
+			state.LastPromptPath = repairedResult.PromptPath
+			if repairedResult.SessionID != "" {
+				state.LastSessionID = repairedResult.SessionID
+			}
+			if repairedResult.SessionPath != "" {
+				state.LastSessionPath = repairedResult.SessionPath
+			}
+			reportPath := filepath.Join(dirs.Reports, fmt.Sprintf("turn-%04d.json", state.TurnIndex))
+			if err := writeJSON(reportPath, report); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				return 1
+			}
+			if err := state.save(statePath); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				return 1
+			}
+			decision := postTurnDecision(cfg.PauseWindowSeconds, report, &state.PendingUserPrompts)
+			if err := state.save(statePath); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				return 1
+			}
+			if decision == "stop" {
+				fmt.Printf("\n=== Wrapper Stop ===\nStopping after turn %d. Last report: %s\n", state.TurnIndex, reportPath)
+				return 0
+			}
+			continue
+		}
+
 		state.TurnIndex++
 		snapshotBefore := captureGitSnapshot(inv.Workspace)
 		prompt := buildPrompt(state, state.LastReport, snapshotBefore, cfg.SkillHint)
@@ -140,8 +193,40 @@ func (a *App) Run(args []string) int {
 	}
 }
 
+func (a *App) bootstrapBareInteractiveState(inv Invocation, dirs StateDirs, statePath string) (*turnResult, *State, error) {
+	turnIndex := 1
+	promptPath := filepath.Join(dirs.Prompts, fmt.Sprintf("turn-%04d-bootstrap.md", turnIndex))
+	messagePath := filepath.Join(dirs.Messages, fmt.Sprintf("turn-%04d-bootstrap.md", turnIndex))
+	result, err := runInteractiveCodexTurn(a.realCodex, inv.Workspace, "", promptPath, messagePath, inv.initialInteractiveArgs(""), "")
+	if err != nil {
+		return nil, nil, err
+	}
+	if result.ReturnCode != 0 {
+		return nil, nil, fmt.Errorf("codex exited with status %d during initial interactive session", result.ReturnCode)
+	}
+	artifact, err := findLatestSessionArtifact(inv.Workspace, time.Time{}, result.SessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	initialGoal := strings.TrimSpace(artifact.InitialUserGoal)
+	if initialGoal == "" {
+		return nil, nil, fmt.Errorf("could not derive an initial project goal from the first interactive session in %s", artifact.SessionPath)
+	}
+	state := newState(inv.Workspace, initialGoal, "hybrid", result.SessionID)
+	state.TurnIndex = turnIndex
+	state.SessionStarted = true
+	state.LastSessionID = result.SessionID
+	state.LastSessionPath = result.SessionPath
+	state.LastPromptPath = promptPath
+	state.LastMessagePath = messagePath
+	if err := state.save(statePath); err != nil {
+		return nil, nil, err
+	}
+	return result, state, nil
+}
+
 func (a *App) runSessionTurn(inv Invocation, state *State, workspace, prompt, promptPath, messagePath string) (*turnResult, error) {
-	if inv.Mode == modeInteractive || inv.Mode == modeInteractiveResume {
+	if inv.Mode == modeInteractive || inv.Mode == modeInteractiveResume || inv.Mode == modeInteractiveBare {
 		var cmdArgs []string
 		sessionHint := state.LastSessionID
 		if !state.SessionStarted {
