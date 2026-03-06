@@ -10,7 +10,7 @@ func buildPrompt(state *State, snapshot GitSnapshot, skillHint bool) string {
 	if skillHint {
 		b.WriteString("Use $codex-session-autopilot if it is installed; otherwise follow the autopilot protocol below exactly.\n\n")
 	}
-	fmt.Fprintf(&b, "Wrapper mode:\n- Strategy: %s\n- Workspace: %s\n- An external wrapper is orchestrating turn boundaries and executing any post_turn_actions you request.\n- Keep tasks grounded in the current repo state, TODO documents, the quoted last assistant response, and concrete verification results.\n- Prefer high-leverage tasks that increase throughput per turn.\n\n", state.Strategy, state.Workspace)
+	fmt.Fprintf(&b, "Wrapper mode:\n- Strategy: %s\n- Workspace: %s\n- An external wrapper is orchestrating turn boundaries.\n- Keep tasks grounded in the current repo state, TODO documents, the quoted last assistant response, and concrete verification results.\n- Prefer high-leverage tasks that increase throughput per turn.\n\n", state.Strategy, state.Workspace)
 	fmt.Fprintf(&b, "Session objective: %s\nTurn index: %d\n\n", state.InitialPrompt, state.TurnIndex)
 	fmt.Fprintf(&b, "Git context before this turn:\n- In git repo: %t\n- Dirty worktree: %t\n- Current branch: %s\n- Has upstream remote: %t\n- Has origin remote: %t\n\n", snapshot.IsRepo, snapshot.Dirty, snapshot.Branch, snapshot.HasUpstream, snapshot.HasOrigin)
 	if strings.TrimSpace(state.LastAssistantMessage) == "" {
@@ -46,7 +46,7 @@ func buildPrompt(state *State, snapshot GitSnapshot, skillHint bool) string {
 	b.WriteString("- Maintain a succinct task tracker if one exists: add newly discovered tasks and reweight them.\n")
 	b.WriteString("- Keep the workspace lean, but do not delete useful caches or artifacts by default.\n")
 	b.WriteString("- Execute the highest-leverage concrete task for this turn.\n")
-	b.WriteString("- If the repo is dirty with source-code changes at the end of the turn, either finish verification, `git diff --stat`, commit, and push during the turn or provide exact post_turn_actions for the wrapper to execute.\n")
+	b.WriteString("- If the repo is dirty with source-code changes at the end of the turn, handle verification, `git diff --stat`, commit, and push within the turn when appropriate.\n")
 	b.WriteString("- Prefer the upstream remote over origin when both exist.\n")
 	b.WriteString("- Ask exactly one tight clarifying question only when correctness, data loss, security, or long-term architecture would otherwise be materially affected.\n")
 	b.WriteString("- Stop only when no concrete task remains or operator input is genuinely required.\n\n")

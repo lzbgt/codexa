@@ -18,8 +18,8 @@ func TestBuildPromptIncludesProtocol(t *testing.T) {
 	if !strings.Contains(prompt, "Prioritize flaky test coverage.") {
 		t.Fatalf("prompt did not include queued operator prompt")
 	}
-	if !strings.Contains(prompt, "post_turn_actions") {
-		t.Fatalf("prompt did not include post_turn_actions contract")
+	if strings.Contains(prompt, "post_turn_actions") {
+		t.Fatalf("prompt should not include post_turn_actions contract anymore")
 	}
 	if !strings.Contains(prompt, "LAST_ASSISTANT_RESPONSE") || !strings.Contains(prompt, "Implemented the parser fix and updated TODOS.") {
 		t.Fatalf("prompt did not include the quoted last assistant response")

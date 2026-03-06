@@ -223,15 +223,6 @@ func collectInteractiveTurnResult(workspace string, beforeInventory sessionInven
 	}, nil
 }
 
-func runAction(workspace string, action PostTurnAction) error {
-	fmt.Printf("\n=== Post-Turn Action (%s) ===\n%s\n", action.Kind, action.Command)
-	cmd := exec.Command("/bin/zsh", "-lc", action.Command)
-	cmd.Dir = workspace
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
 func quoteArgs(args []string) []string {
 	out := make([]string, 0, len(args))
 	for _, arg := range args {

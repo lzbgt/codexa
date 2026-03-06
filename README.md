@@ -10,7 +10,7 @@ The wrapper is designed for this workflow:
 - automatic continuation after the interactive child exits, using Codex's own session artifacts
 - occasional operator engagement between turns
 - no repo-local wrapper cache or state directory
-- backend-decided verification, commit, and push via structured `post_turn_actions`
+- one-line stop or continue marker only
 
 ## Build
 
@@ -91,28 +91,12 @@ The wrapper resolves the real Codex binary from `PATH`. If the wrapper itself is
 3. If the first launch was bare `codexa [root args]`, the wrapper derives the project objective from that finished session's first user message.
 4. It quotes the last assistant response into the next prompt, asks Codex to identify new tasks, merge and reweight them against current TODOs, and execute the highest-leverage task.
 5. It reads `AUTO_MODE_NEXT=continue|stop` from the assistant reply. If that marker is missing, it defaults to `continue`.
-6. If the reply includes a structured JSON footer, the wrapper also consumes `post_turn_actions`.
+6. It does not parse JSON reports or execute wrapper-side post-turn actions.
 7. It pauses briefly for operator input, then either resumes the same interactive session or stops.
 
 When you start with `codexa --yolo resume --last` and omit a fresh prompt, the wrapper does not depend on any saved wrapper state. It simply continues from the resumed Codex session and derives the next turn from the latest session artifact.
 
 For `exec` and `exec resume`, the wrapper keeps using non-interactive Codex commands and `-o/--output-last-message` capture as before.
-
-## Post-turn actions
-
-The wrapper does not hard-code repo-specific verification, commit, or push commands. Instead, Codex must provide exact shell commands in `post_turn_actions` whenever the turn leaves source-code changes that still need verification or finalization.
-
-Example:
-
-```json
-[
-  {"kind":"verify","command":"go test ./...","description":"Verify the repo."},
-  {"kind":"commit","command":"git add -A && git commit -m 'autopilot: finish parser fix'","description":"Commit the verified changes."},
-  {"kind":"push","command":"git push upstream HEAD","description":"Push to the preferred remote."}
-]
-```
-
-If a turn leaves source-code changes dirty and the reply omits `post_turn_actions`, the wrapper stops instead of guessing.
 
 ## Operator engagement
 

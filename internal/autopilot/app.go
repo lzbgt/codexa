@@ -60,7 +60,6 @@ func (a *App) Run(args []string) int {
 
 	for {
 		if state == nil {
-			snapshotBefore := captureGitSnapshot(inv.Workspace)
 			bootstrapResult, bootstrapState, err := a.bootstrapInteractiveState(inv)
 			if err != nil {
 				return fail(err)
@@ -77,10 +76,6 @@ func (a *App) Run(args []string) int {
 			}
 			if resolution.Result.SessionPath != "" {
 				state.LastSessionPath = resolution.Result.SessionPath
-			}
-			snapshotAfter := captureGitSnapshot(inv.Workspace)
-			if err := executePostTurnActions(inv.Workspace, state.TurnIndex, resolution.Report, snapshotBefore, snapshotAfter); err != nil {
-				return fail(err)
 			}
 			decision := postTurnDecision(cfg.PauseWindowSeconds, resolution.Report, &state.PendingUserPrompts)
 			if decision == "stop" {
@@ -121,11 +116,6 @@ func (a *App) Run(args []string) int {
 		}
 		if resolution.Result.SessionPath != "" {
 			state.LastSessionPath = resolution.Result.SessionPath
-		}
-
-		snapshotAfter := captureGitSnapshot(inv.Workspace)
-		if err := executePostTurnActions(inv.Workspace, state.TurnIndex, resolution.Report, snapshotBefore, snapshotAfter); err != nil {
-			return fail(err)
 		}
 
 		decision := postTurnDecision(cfg.PauseWindowSeconds, resolution.Report, &state.PendingUserPrompts)
@@ -221,29 +211,8 @@ func (a *App) extractReportResolution(inv Invocation, state *State, result *turn
 	}, nil
 }
 
-func executePostTurnActions(workspace string, turnIndex int, report *AutoReport, before, after GitSnapshot) error {
-	if !after.Dirty && len(report.PostTurnActions) == 0 {
-		return nil
-	}
-	needsFinalization := after.hasNewCodeChangesComparedTo(before)
-	if needsFinalization && len(report.PostTurnActions) == 0 {
-		return fmt.Errorf("repo is still dirty after turn %d, but the reply did not provide post_turn_actions", turnIndex)
-	}
-	for _, action := range report.PostTurnActions {
-		if err := runAction(workspace, action); err != nil {
-			return err
-		}
-	}
-	if needsFinalization {
-		if post := captureGitSnapshot(workspace); post.hasNewCodeChangesComparedTo(before) {
-			return fmt.Errorf("repo still has new dirty source changes after post_turn_actions completed")
-		}
-	}
-	return nil
-}
-
 func postTurnDecision(pauseSeconds int, report *AutoReport, queue *[]string) string {
-	fmt.Printf("\n=== Turn Summary ===\n%s\nauto_mode_next=%s | verification=%s | pending_tasks=%d\n", report.Summary, report.AutoModeNext, report.Verification.Status, len(report.PendingTasks))
+	fmt.Printf("\n=== Turn Summary ===\n%s\nauto_mode_next=%s\n", report.Summary, report.AutoModeNext)
 	if report.UserEngagementNeeded {
 		return operatorLoop(report, queue, "")
 	}

@@ -121,23 +121,7 @@ After each turn, the wrapper prints a summary. During the pause window:
 - type prompts in operator input mode: queue them for the next turn
 - use `/show`, `/clear`, or `/stop` as needed
 
-## 7. Post-turn verification, commit, and push
-
-The wrapper does not guess repo-specific commands. Codex must emit exact `post_turn_actions` in the JSON footer when a turn leaves dirty source-code changes that still need verification or finalization.
-
-Example:
-
-```json
-[
-  {"kind":"verify","command":"go test ./...","description":"Verify the repo."},
-  {"kind":"commit","command":"git add -A && git commit -m 'autopilot: finish parser fix'","description":"Commit the verified changes."},
-  {"kind":"push","command":"git push upstream HEAD","description":"Push to the preferred remote."}
-]
-```
-
-If the turn leaves new dirty source changes and the footer omits `post_turn_actions`, the wrapper stops instead of inventing commands.
-
-## 8. Configuration
+## 7. Configuration
 
 Environment overrides:
 
@@ -146,11 +130,10 @@ export CODEX_AUTOPILOT_PAUSE_SECONDS=8
 export CODEX_AUTOPILOT_REAL_BIN=/opt/homebrew/bin/codex
 ```
 
-## 9. Troubleshooting
+## 8. Troubleshooting
 
 - If the wrapper passes a command straight through instead of entering autopilot mode, use one of the supported prompt or `exec` forms above.
 - If a session appears to behave like plain `codex`, confirm you launched `codexa`, not the upstream `codex`, and inspect the matching JSONL under `~/.codex/sessions/`.
 - If `codexa --yolo resume`, `codexa --yolo resume --last`, or `codexa --yolo resume <session-id>` is pointed at a native Codex session, give the resumed session one real prompt first if needed; after that first resumed turn exits, the wrapper can continue automatically from the session artifact.
 - If the wrapper reports that multiple Codex sessions changed in the same workspace during one turn, close the extra session and rerun. The wrapper now refuses to guess which JSONL belongs to the turn.
 - If the wrapper cannot resolve the real Codex binary, set `CODEX_AUTOPILOT_REAL_BIN`.
-- If the wrapper stops because the repo is still dirty, inspect the last assistant reply in the session JSONL and check whether Codex emitted the expected `post_turn_actions`.
