@@ -62,12 +62,15 @@ func (a *App) Run(args []string) int {
 	}
 	statePath := filepath.Join(dirs.Base, "session_state.json")
 	var state *State
-	if inv.Mode == modeInteractiveBare || shouldBootstrapInteractiveResume(inv) {
+	switch {
+	case inv.Mode == modeInteractiveBare || shouldReuseExistingStateForInteractiveResume(inv):
 		state, err = loadStateIfExists(statePath)
 		if err != nil {
 			return fail(err)
 		}
-	} else {
+	case shouldBootstrapInteractiveResume(inv):
+		state = nil
+	default:
 		state, err = loadOrCreateState(statePath, inv.Workspace, inv.Prompt, "hybrid", inv.ExplicitSessionID)
 		if err != nil {
 			return fail(err)
@@ -275,8 +278,18 @@ func (a *App) bootstrapInteractiveState(inv Invocation, dirs StateDirs, statePat
 	return result, state, nil
 }
 
+func shouldReuseExistingStateForInteractiveResume(inv Invocation) bool {
+	if inv.Mode != modeInteractiveResume || strings.TrimSpace(inv.Prompt) != "" {
+		return false
+	}
+	return inv.ResumeTarget == "--last" && inv.ExplicitSessionID == ""
+}
+
 func shouldBootstrapInteractiveResume(inv Invocation) bool {
-	return inv.Mode == modeInteractiveResume && strings.TrimSpace(inv.Prompt) == ""
+	if inv.Mode != modeInteractiveResume || strings.TrimSpace(inv.Prompt) != "" {
+		return false
+	}
+	return !shouldReuseExistingStateForInteractiveResume(inv)
 }
 
 func (a *App) runSessionTurn(inv Invocation, state *State, workspace, prompt, promptPath, messagePath string) (*turnResult, error) {

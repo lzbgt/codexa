@@ -124,15 +124,32 @@ func parseExecInvocation(inv Invocation, rest []string) (Invocation, error) {
 }
 
 func parseResumeInvocation(inv Invocation, rest []string) (Invocation, error) {
-	parsed, err := parseExecResumeInvocation(inv, rest)
-	if err != nil {
-		return parsed, err
+	flags, _, next, ok := parseFlags(rest, 0, resumeFlagSpec(), false)
+	if !ok {
+		return passthroughInvocation(inv), nil
 	}
-	switch parsed.Mode {
-	case modeResume:
-		parsed.Mode = modeInteractiveResume
+	inv.InitialExecArgs = append(inv.InitialExecArgs, flags...)
+	inv.ResumeCompatible = append(inv.ResumeCompatible, flags...)
+	positional := rest[next:]
+	switch {
+	case containsFlag(flags, "--last"):
+		inv.Mode = modeInteractiveResume
+		inv.ResumeTarget = "--last"
+		inv.Prompt = strings.TrimSpace(strings.Join(positional, " "))
+		return inv, nil
+	case len(positional) == 0:
+		inv.Mode = modeInteractiveResume
+		inv.Prompt = ""
+		return inv, nil
+	case uuidish.MatchString(positional[0]):
+		inv.Mode = modeInteractiveResume
+		inv.ResumeTarget = positional[0]
+		inv.ExplicitSessionID = positional[0]
+		inv.Prompt = strings.TrimSpace(strings.Join(positional[1:], " "))
+		return inv, nil
+	default:
+		return passthroughInvocation(inv), nil
 	}
-	return parsed, nil
 }
 
 func parseExecResumeInvocation(inv Invocation, rest []string) (Invocation, error) {
@@ -341,12 +358,7 @@ func (inv Invocation) initialCommandArgs(lastMessagePath string) []string {
 		args = append(args, inv.InitialExecArgs...)
 	case modeResume:
 		args = append(args, "exec", "resume")
-		if inv.ResumeTarget != "" {
-			args = append(args, inv.ResumeTarget)
-		} else {
-			args = append(args, "--last")
-		}
-		args = append(args, inv.InitialExecArgs...)
+		args = append(args, inv.initialResumeStartArgs()...)
 	}
 	args = append(args, "-o", lastMessagePath, "-")
 	return args
@@ -372,13 +384,7 @@ func (inv Invocation) initialInteractiveArgs(prompt string) []string {
 		args = append(args, prompt)
 	case modeInteractiveResume:
 		args = append(args, "resume")
-		if inv.ResumeTarget != "" {
-			args = append(args, inv.ResumeTarget)
-		} else if inv.ExplicitSessionID != "" {
-			args = append(args, inv.ExplicitSessionID)
-		} else {
-			args = append(args, "--last")
-		}
+		args = append(args, inv.initialResumeStartArgs()...)
 		if prompt != "" {
 			args = append(args, prompt)
 		}
@@ -399,6 +405,21 @@ func (inv Invocation) resumeInteractiveArgs(prompt, sessionID string) []string {
 	}
 	if prompt != "" {
 		args = append(args, prompt)
+	}
+	return args
+}
+
+func (inv Invocation) initialResumeStartArgs() []string {
+	args := append([]string{}, inv.InitialExecArgs...)
+	switch {
+	case inv.ExplicitSessionID != "":
+		args = append(args, inv.ExplicitSessionID)
+	case inv.ResumeTarget == "--last":
+		if !containsFlag(inv.InitialExecArgs, "--last") {
+			args = append(args, "--last")
+		}
+	case inv.ResumeTarget != "":
+		args = append(args, inv.ResumeTarget)
 	}
 	return args
 }

@@ -46,8 +46,10 @@ Interactive-style invocations are intercepted and orchestrated automatically:
 
 ```bash
 bin/codexa --yolo
+bin/codexa --yolo resume
 bin/codexa --yolo --search "Continue the highest-leverage work until no concrete task remains."
 bin/codexa --yolo resume --last
+bin/codexa --yolo resume 019cc422-dc94-7553-a6e9-acfc3d0e183b
 bin/codexa --yolo resume --last "Continue after the blocker investigation."
 ```
 
@@ -62,7 +64,9 @@ The wrapper currently intercepts these autopilot-compatible forms:
 
 - root prompt form: `codexa [root codex args] "prompt"`
 - bare interactive root form: `codexa [root codex args]`
+- root resume picker form: `codexa [root codex args] resume [resume flags]`
 - root resume form: `codexa [root codex args] resume --last [prompt]`
+- root resume explicit-session form: `codexa [root codex args] resume <session-id> [prompt]`
 - `exec` form: `codexa [root codex args] exec [exec args] "prompt"`
 - `exec resume` form: `codexa [root codex args] exec resume --last "prompt"`
 
@@ -92,7 +96,7 @@ The wrapper resolves the real Codex binary from `PATH`. If the wrapper itself is
 
 If Codex forgets the JSON footer or emits an invalid report, the wrapper immediately resumes the same session with a protocol-repair prompt instead of stopping. The next real turn only starts after a valid report has been recovered.
 
-When you start with `codexa --yolo resume --last` and omit a fresh prompt, the wrapper reuses the previously recorded objective from `.codex-autopilot/session_state.json` when it exists. If there is no wrapper state yet, the wrapper still launches the resumed interactive session, lets you provide the first real prompt naturally, then derives the wrapper objective from that resumed turn and continues under protocol afterward.
+When you start with `codexa --yolo resume --last` and omit a fresh prompt, the wrapper reuses the previously recorded objective from `.codex-autopilot/session_state.json` when it exists. By contrast, `codexa --yolo resume` and `codexa --yolo resume <session-id>` always launch the real Codex resume flow first, then bootstrap wrapper state from the first resumed prompt/turn so the user-selected session is honored.
 
 For `exec` and `exec resume`, the wrapper keeps using non-interactive Codex commands and `-o/--output-last-message` capture as before.
 
