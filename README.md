@@ -18,6 +18,27 @@ cd /Users/zongbaolu/work/codex-hybrid-autopilot
 go build -o bin/codex-hybrid-autopilot ./cmd/codex-hybrid-autopilot
 ```
 
+The built binary lives at [bin/codex-hybrid-autopilot](/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codex-hybrid-autopilot).
+
+## Quick start
+
+1. Build the binary.
+2. Make sure the real `codex` binary is on `PATH`.
+3. Run the wrapper from the target repository with a plain prompt or `exec` form.
+4. Let the wrapper save its state under `.codex-autopilot/` in that target repository.
+
+Example:
+
+```bash
+cd /path/to/target/repo
+/Users/zongbaolu/work/codex-hybrid-autopilot/bin/codex-hybrid-autopilot \
+  -p yolo \
+  --search \
+  "Continue the highest-leverage work until no concrete task remains."
+```
+
+For a longer step-by-step guide, see [USAGE.md](/Users/zongbaolu/work/codex-hybrid-autopilot/USAGE.md).
+
 ## Basic usage
 
 Compatible turn-based invocations are intercepted and resumed automatically:
@@ -27,6 +48,15 @@ bin/codex-hybrid-autopilot -p yolo --search "Continue the highest-leverage work 
 bin/codex-hybrid-autopilot exec "Fix the top failing test and keep going."
 bin/codex-hybrid-autopilot exec resume --last "Continue from the current repo state."
 ```
+
+The wrapper currently intercepts these autopilot-compatible forms:
+
+- root prompt form: `codex-hybrid-autopilot [root codex args] "prompt"`
+- `exec` form: `codex-hybrid-autopilot [root codex args] exec [exec args] "prompt"`
+- `resume` form: `codex-hybrid-autopilot [root codex args] resume --last "prompt"`
+- `exec resume` form: `codex-hybrid-autopilot [root codex args] exec resume --last "prompt"`
+
+Everything else is passed through to the real `codex` binary unchanged.
 
 Pass-through invocations are forwarded directly to the real `codex` binary:
 
