@@ -112,3 +112,16 @@ func TestHandleOperatorLine(t *testing.T) {
 		t.Fatalf("unexpected empty-line decision: %q", got)
 	}
 }
+
+func TestOperatorInterruptStopsWrapperPrompt(t *testing.T) {
+	report := &AutoReport{AutoModeNext: "continue"}
+	if got := func() string {
+		result := operatorTriggerResult{Trigger: operatorTriggerInterrupt}
+		if result.Trigger == operatorTriggerInterrupt {
+			return "stop"
+		}
+		return report.AutoModeNext
+	}(); got != "stop" {
+		t.Fatalf("unexpected interrupt decision: %q", got)
+	}
+}

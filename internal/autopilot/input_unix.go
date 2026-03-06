@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -24,6 +25,11 @@ type operatorTriggerResult struct {
 	Trigger operatorTrigger
 	Line    string
 }
+
+var (
+	operatorInputBufferMu sync.Mutex
+	operatorInputBuffer   []byte
+)
 
 func waitForOperatorTrigger(timeout time.Duration) operatorTriggerResult {
 	if timeout <= 0 {
@@ -138,15 +144,22 @@ func readOperatorTrigger(fd int) (operatorTriggerResult, error) {
 }
 
 func classifyOperatorTrigger(data []byte) operatorTriggerResult {
-	if bytes.IndexByte(data, 3) >= 0 {
+	operatorInputBufferMu.Lock()
+	defer operatorInputBufferMu.Unlock()
+
+	combined := append(append([]byte{}, operatorInputBuffer...), data...)
+	if index := bytes.IndexByte(combined, 3); index >= 0 {
+		operatorInputBuffer = append([]byte{}, combined[index+1:]...)
 		return operatorTriggerResult{Trigger: operatorTriggerInterrupt}
 	}
-	if index := bytes.IndexAny(data, "\r\n"); index >= 0 {
-		line := strings.TrimSpace(string(data[:index]))
+	if index := bytes.IndexAny(combined, "\r\n"); index >= 0 {
+		line := strings.TrimSpace(string(combined[:index]))
+		operatorInputBuffer = append([]byte{}, combined[index+1:]...)
 		return operatorTriggerResult{
 			Trigger: operatorTriggerEnter,
 			Line:    line,
 		}
 	}
+	operatorInputBuffer = append([]byte{}, combined...)
 	return operatorTriggerResult{Trigger: operatorTriggerNone}
 }

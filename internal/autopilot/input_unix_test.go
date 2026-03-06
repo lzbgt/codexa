@@ -5,6 +5,10 @@ package autopilot
 import "testing"
 
 func TestClassifyOperatorTrigger(t *testing.T) {
+	operatorInputBufferMu.Lock()
+	operatorInputBuffer = nil
+	operatorInputBufferMu.Unlock()
+
 	tests := []struct {
 		name string
 		data []byte
@@ -20,5 +24,20 @@ func TestClassifyOperatorTrigger(t *testing.T) {
 		if got := classifyOperatorTrigger(tt.data); got != tt.want {
 			t.Fatalf("%s: got %v want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestClassifyOperatorTriggerBuffersPartialLine(t *testing.T) {
+	operatorInputBufferMu.Lock()
+	operatorInputBuffer = nil
+	operatorInputBufferMu.Unlock()
+
+	first := classifyOperatorTrigger([]byte("ship"))
+	if first.Trigger != operatorTriggerNone {
+		t.Fatalf("unexpected trigger from partial input: %#v", first)
+	}
+	second := classifyOperatorTrigger([]byte(" it\n"))
+	if second.Trigger != operatorTriggerEnter || second.Line != "ship it" {
+		t.Fatalf("unexpected buffered line result: %#v", second)
 	}
 }

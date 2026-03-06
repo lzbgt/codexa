@@ -245,7 +245,7 @@ func operatorLoop(report *AutoReport, queue *[]string, initialLine string) strin
 		}
 		if result.Trigger == operatorTriggerInterrupt {
 			fmt.Println("^C")
-			return report.AutoModeNext
+			return "stop"
 		}
 		decision := handleOperatorLine(report, queue, result.Line)
 		if decision != "" {

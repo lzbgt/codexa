@@ -211,7 +211,7 @@ func pumpInteractiveInput(ptmx *os.File, waitCh <-chan error) error {
 }
 
 func collectInteractiveTurnResult(workspace string, beforeInventory sessionInventory, startedAt time.Time, sessionIDHint string, returnCode int) (*turnResult, error) {
-	artifact, err := findTurnSessionArtifact(workspace, beforeInventory, startedAt, sessionIDHint)
+	artifact, err := waitForTurnSessionArtifact(workspace, beforeInventory, startedAt, sessionIDHint, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -221,6 +221,23 @@ func collectInteractiveTurnResult(workspace string, beforeInventory sessionInven
 		SessionID:   artifact.SessionID,
 		SessionPath: artifact.SessionPath,
 	}, nil
+}
+
+func waitForTurnSessionArtifact(workspace string, beforeInventory sessionInventory, startedAt time.Time, sessionIDHint string, timeout time.Duration) (*sessionArtifact, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		artifact, err := findTurnSessionArtifact(workspace, beforeInventory, startedAt, sessionIDHint)
+		if err == nil {
+			return artifact, nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return nil, lastErr
 }
 
 func quoteArgs(args []string) []string {
