@@ -51,6 +51,31 @@ func TestExtractReportDefaultsToContinueWithoutFooter(t *testing.T) {
 	}
 }
 
+func TestExtractReportDefaultsJSONToContinueWithoutAutoModeNext(t *testing.T) {
+	reportText := `
+AUTO_REPORT_JSON_BEGIN
+{
+  "summary": "Implemented the parser fix.",
+  "recommended_next_prompt": "Run the remaining verification.",
+  "user_engagement_needed": false,
+  "pending_tasks": [
+    {"priority": "P0", "task": "Finish the parser verification.", "status": "pending"}
+  ],
+  "discovered_tasks": ["Add a regression test."],
+  "reweighting_rationale": "Verification remains the blocker.",
+  "verification": {"status": "partial", "summary": "Targeted tests passed."}
+}
+AUTO_REPORT_JSON_END
+`
+	report, err := extractReport(reportText)
+	if err != nil {
+		t.Fatalf("extractReport returned error: %v", err)
+	}
+	if report.AutoModeNext != "continue" {
+		t.Fatalf("unexpected auto_mode_next: %q", report.AutoModeNext)
+	}
+}
+
 func TestProtocolInstructionsMentionDefaultContinue(t *testing.T) {
 	text := protocolInstructions()
 	for _, want := range []string{"AUTO_MODE_NEXT=continue", "AUTO_CONTINUE_MODE=continue|stop", "default to continuing"} {

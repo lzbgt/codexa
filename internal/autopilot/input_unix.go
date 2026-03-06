@@ -3,8 +3,10 @@
 package autopilot
 
 import (
+	"bytes"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -18,9 +20,14 @@ const (
 	operatorTriggerInterrupt
 )
 
-func waitForOperatorTrigger(timeout time.Duration) operatorTrigger {
+type operatorTriggerResult struct {
+	Trigger operatorTrigger
+	Line    string
+}
+
+func waitForOperatorTrigger(timeout time.Duration) operatorTriggerResult {
 	if timeout <= 0 {
-		return operatorTriggerNone
+		return operatorTriggerResult{Trigger: operatorTriggerNone}
 	}
 
 	fd := int(os.Stdin.Fd())
@@ -32,13 +39,13 @@ func waitForOperatorTrigger(timeout time.Duration) operatorTrigger {
 	for {
 		select {
 		case <-sigint:
-			return operatorTriggerInterrupt
+			return operatorTriggerResult{Trigger: operatorTriggerInterrupt}
 		default:
 		}
 
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return operatorTriggerNone
+			return operatorTriggerResult{Trigger: operatorTriggerNone}
 		}
 		wait := remaining
 		if wait > 200*time.Millisecond {
@@ -65,39 +72,81 @@ func waitForOperatorTrigger(timeout time.Duration) operatorTrigger {
 			continue
 		}
 		if err != nil {
-			return operatorTriggerNone
+			return operatorTriggerResult{Trigger: operatorTriggerNone}
 		}
-		if trigger != operatorTriggerNone {
+		if trigger.Trigger != operatorTriggerNone {
 			return trigger
 		}
 	}
 }
 
-func readOperatorTrigger(fd int) (operatorTrigger, error) {
+func waitForOperatorLine() (operatorTriggerResult, error) {
+	fd := int(os.Stdin.Fd())
+	sigint := make(chan os.Signal, 1)
+	signal.Notify(sigint, os.Interrupt)
+	defer signal.Stop(sigint)
+
+	for {
+		select {
+		case <-sigint:
+			return operatorTriggerResult{Trigger: operatorTriggerInterrupt}, nil
+		default:
+		}
+
+		pollFds := []unix.PollFd{{
+			Fd:     int32(fd),
+			Events: unix.POLLIN,
+		}}
+		n, err := unix.Poll(pollFds, 200)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil {
+			return operatorTriggerResult{Trigger: operatorTriggerNone}, err
+		}
+		if n <= 0 || pollFds[0].Revents&unix.POLLIN == 0 {
+			continue
+		}
+		trigger, err := readOperatorTrigger(fd)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil {
+			return operatorTriggerResult{Trigger: operatorTriggerNone}, err
+		}
+		if trigger.Trigger != operatorTriggerNone {
+			return trigger, nil
+		}
+	}
+}
+
+func readOperatorTrigger(fd int) (operatorTriggerResult, error) {
 	if err := unix.SetNonblock(fd, true); err != nil {
-		return operatorTriggerNone, err
+		return operatorTriggerResult{Trigger: operatorTriggerNone}, err
 	}
 	defer unix.SetNonblock(fd, false)
 
 	buf := make([]byte, 128)
 	n, err := unix.Read(fd, buf)
 	if err == unix.EAGAIN || err == unix.EWOULDBLOCK || n == 0 {
-		return operatorTriggerNone, nil
+		return operatorTriggerResult{Trigger: operatorTriggerNone}, nil
 	}
 	if err != nil {
-		return operatorTriggerNone, err
+		return operatorTriggerResult{Trigger: operatorTriggerNone}, err
 	}
 	return classifyOperatorTrigger(buf[:n]), nil
 }
 
-func classifyOperatorTrigger(data []byte) operatorTrigger {
-	for _, b := range data {
-		switch b {
-		case 3:
-			return operatorTriggerInterrupt
-		case '\n', '\r':
-			return operatorTriggerEnter
+func classifyOperatorTrigger(data []byte) operatorTriggerResult {
+	if bytes.IndexByte(data, 3) >= 0 {
+		return operatorTriggerResult{Trigger: operatorTriggerInterrupt}
+	}
+	if index := bytes.IndexAny(data, "\r\n"); index >= 0 {
+		line := strings.TrimSpace(string(data[:index]))
+		return operatorTriggerResult{
+			Trigger: operatorTriggerEnter,
+			Line:    line,
 		}
 	}
-	return operatorTriggerNone
+	return operatorTriggerResult{Trigger: operatorTriggerNone}
 }

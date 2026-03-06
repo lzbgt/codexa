@@ -94,3 +94,21 @@ func TestShouldBootstrapInteractiveResume(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleOperatorLine(t *testing.T) {
+	report := &AutoReport{AutoModeNext: "continue"}
+	queue := []string{}
+
+	if got := handleOperatorLine(report, &queue, "ship it"); got != "" {
+		t.Fatalf("unexpected decision for queued prompt: %q", got)
+	}
+	if len(queue) != 1 || queue[0] != "ship it" {
+		t.Fatalf("unexpected queue: %#v", queue)
+	}
+	if got := handleOperatorLine(report, &queue, "/stop"); got != "stop" {
+		t.Fatalf("unexpected stop decision: %q", got)
+	}
+	if got := handleOperatorLine(report, &queue, ""); got != "continue" {
+		t.Fatalf("unexpected empty-line decision: %q", got)
+	}
+}

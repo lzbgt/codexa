@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
 
@@ -134,21 +135,79 @@ func runAttachedInteractiveCommand(cmd *exec.Cmd) error {
 		_ = term.Restore(int(os.Stdin.Fd()), oldState)
 	}()
 
-	copyDone := make(chan struct{}, 2)
+	stdoutDone := make(chan struct{}, 1)
 	go func() {
 		_, _ = io.Copy(os.Stdout, ptmx)
-		copyDone <- struct{}{}
-	}()
-	go func() {
-		_, _ = io.Copy(ptmx, os.Stdin)
-		copyDone <- struct{}{}
+		stdoutDone <- struct{}{}
 	}()
 
-	waitErr := cmd.Wait()
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	waitErr := pumpInteractiveInput(ptmx, waitCh)
 	_ = ptmx.Close()
-	<-copyDone
-	<-copyDone
+	<-stdoutDone
 	return waitErr
+}
+
+func pumpInteractiveInput(ptmx *os.File, waitCh <-chan error) error {
+	stdinFD := int(os.Stdin.Fd())
+	ptmxFD := int(ptmx.Fd())
+	buffer := make([]byte, 4096)
+
+	for {
+		select {
+		case err := <-waitCh:
+			return err
+		default:
+		}
+
+		pollFds := []unix.PollFd{{
+			Fd:     int32(stdinFD),
+			Events: unix.POLLIN,
+		}}
+		n, err := unix.Poll(pollFds, 100)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if n <= 0 || pollFds[0].Revents&unix.POLLIN == 0 {
+			continue
+		}
+		readBytes, err := unix.Read(stdinFD, buffer)
+		if err == unix.EINTR {
+			continue
+		}
+		if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if readBytes == 0 {
+			continue
+		}
+		written := 0
+		for written < readBytes {
+			chunkWritten, writeErr := unix.Write(ptmxFD, buffer[written:readBytes])
+			if writeErr == unix.EINTR {
+				continue
+			}
+			if writeErr != nil {
+				select {
+				case err := <-waitCh:
+					return err
+				default:
+					return writeErr
+				}
+			}
+			written += chunkWritten
+		}
+	}
 }
 
 func collectInteractiveTurnResult(workspace string, beforeInventory sessionInventory, startedAt time.Time, sessionIDHint string, returnCode int) (*turnResult, error) {

@@ -90,8 +90,12 @@ func extractReport(text string) (*AutoReport, error) {
 		if err := json.Unmarshal([]byte(match[1]), &report); err != nil {
 			return nil, err
 		}
-		if modeNext, err := extractModeNext(text); err == nil && report.AutoModeNext == "" {
-			report.AutoModeNext = modeNext
+		if report.AutoModeNext == "" {
+			if modeNext, err := extractModeNext(text); err == nil {
+				report.AutoModeNext = modeNext
+			} else {
+				report.AutoModeNext = "continue"
+			}
 		}
 		if err := report.Validate(); err != nil {
 			return nil, err

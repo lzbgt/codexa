@@ -1,7 +1,6 @@
 package autopilot
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -246,49 +245,67 @@ func executePostTurnActions(workspace string, turnIndex int, report *AutoReport,
 func postTurnDecision(pauseSeconds int, report *AutoReport, queue *[]string) string {
 	fmt.Printf("\n=== Turn Summary ===\n%s\nauto_mode_next=%s | verification=%s | pending_tasks=%d\n", report.Summary, report.AutoModeNext, report.Verification.Status, len(report.PendingTasks))
 	if report.UserEngagementNeeded {
-		return operatorLoop(report, queue)
+		return operatorLoop(report, queue, "")
 	}
 	if pauseSeconds <= 0 {
 		return report.AutoModeNext
 	}
 	fmt.Printf("Next turn decision in %ds. Press Enter now to open operator input mode.\n", pauseSeconds)
-	switch waitForOperatorTrigger(time.Duration(pauseSeconds) * time.Second) {
+	trigger := waitForOperatorTrigger(time.Duration(pauseSeconds) * time.Second)
+	switch trigger.Trigger {
 	case operatorTriggerEnter:
-		return operatorLoop(report, queue)
+		return operatorLoop(report, queue, trigger.Line)
 	case operatorTriggerInterrupt:
 		fmt.Println("\nOperator input mode requested via Ctrl+C.")
-		return operatorLoop(report, queue)
+		return operatorLoop(report, queue, "")
 	}
 	return report.AutoModeNext
 }
 
-func operatorLoop(report *AutoReport, queue *[]string) string {
-	reader := bufio.NewReader(os.Stdin)
+func operatorLoop(report *AutoReport, queue *[]string, initialLine string) string {
 	fmt.Println("Operator input mode. Enter text to queue a prompt, /show, /clear, /stop, or an empty line to continue.")
+	if initialLine != "" {
+		fmt.Printf("autopilot> %s\n", initialLine)
+		return handleOperatorLine(report, queue, initialLine)
+	}
 	for {
 		fmt.Print("autopilot> ")
-		line, err := reader.ReadString('\n')
+		result, err := waitForOperatorLine()
 		if err != nil {
 			return report.AutoModeNext
 		}
-		line = strings.TrimSpace(line)
-		if line == "" {
+		if result.Trigger == operatorTriggerInterrupt {
+			fmt.Println("^C")
 			return report.AutoModeNext
 		}
-		switch line {
-		case "/show":
-			fmt.Println("Queued prompts:")
-			for _, item := range *queue {
-				fmt.Println("-", item)
-			}
-		case "/clear":
-			*queue = nil
-			fmt.Println("Queue cleared.")
-		case "/stop":
-			return "stop"
-		default:
-			*queue = append(*queue, line)
-			fmt.Println("Queued.")
+		decision := handleOperatorLine(report, queue, result.Line)
+		if decision != "" {
+			return decision
 		}
+	}
+}
+
+func handleOperatorLine(report *AutoReport, queue *[]string, line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return report.AutoModeNext
+	}
+	switch line {
+	case "/show":
+		fmt.Println("Queued prompts:")
+		for _, item := range *queue {
+			fmt.Println("-", item)
+		}
+		return ""
+	case "/clear":
+		*queue = nil
+		fmt.Println("Queue cleared.")
+		return ""
+	case "/stop":
+		return "stop"
+	default:
+		*queue = append(*queue, line)
+		fmt.Println("Queued.")
+		return ""
 	}
 }
