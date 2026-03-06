@@ -225,8 +225,8 @@ func postTurnDecision(pauseSeconds int, report *AutoReport, queue *[]string) str
 	case operatorTriggerEnter:
 		return operatorLoop(report, queue, trigger.Line)
 	case operatorTriggerInterrupt:
-		fmt.Println("\nOperator input mode requested via Ctrl+C.")
-		return operatorLoop(report, queue, "")
+		fmt.Println("\nWrapper interrupted while idle.")
+		return "stop"
 	}
 	return report.AutoModeNext
 }

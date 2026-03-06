@@ -31,6 +31,12 @@ var (
 	operatorInputBuffer   []byte
 )
 
+func clearOperatorInputBuffer() {
+	operatorInputBufferMu.Lock()
+	defer operatorInputBufferMu.Unlock()
+	operatorInputBuffer = nil
+}
+
 func waitForOperatorTrigger(timeout time.Duration) operatorTriggerResult {
 	if timeout <= 0 {
 		return operatorTriggerResult{Trigger: operatorTriggerNone}

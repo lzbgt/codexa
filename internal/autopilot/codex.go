@@ -108,6 +108,8 @@ func runAttachedInteractiveCommand(cmd *exec.Cmd) error {
 		return cmd.Run()
 	}
 
+	clearOperatorInputBuffer()
+
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		return err
