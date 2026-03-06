@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Session Autopilot"
+  short_description: "Structured continuation for Codex runs"
+  default_prompt: "Use $codex-session-autopilot to continue this Codex session autonomously while keeping a visible task tracker and stop when no concrete work remains."
