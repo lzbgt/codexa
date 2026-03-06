@@ -9,12 +9,12 @@ func TestShouldReuseExistingStateForInteractiveResume(t *testing.T) {
 		want bool
 	}{
 		{
-			name: "resume last without prompt reuses state",
+			name: "resume last without prompt does not reuse state",
 			inv: Invocation{
 				Mode:         modeInteractiveResume,
 				ResumeTarget: "--last",
 			},
-			want: true,
+			want: false,
 		},
 		{
 			name: "resume picker without prompt bootstraps",
@@ -72,12 +72,12 @@ func TestShouldBootstrapInteractiveResume(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "resume last without prompt reuses instead of bootstrap",
+			name: "resume last without prompt bootstraps without local wrapper state",
 			inv: Invocation{
 				Mode:         modeInteractiveResume,
 				ResumeTarget: "--last",
 			},
-			want: false,
+			want: true,
 		},
 		{
 			name: "resume with inline prompt does not bootstrap",

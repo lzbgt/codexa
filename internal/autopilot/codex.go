@@ -16,11 +16,10 @@ import (
 )
 
 type turnResult struct {
-	ReturnCode      int
-	PromptPath      string
-	LastMessagePath string
-	SessionID       string
-	SessionPath     string
+	ReturnCode  int
+	LastMessage string
+	SessionID   string
+	SessionPath string
 }
 
 func resolveRealCodex(config Config) (string, error) {
@@ -54,37 +53,32 @@ func runPassthrough(realCodex string, args []string) int {
 	return 0
 }
 
-func runCodexTurn(realCodex, workspace, prompt, promptPath string, codexArgs []string) (*turnResult, error) {
-	if err := os.WriteFile(promptPath, []byte(prompt), 0o644); err != nil {
-		return nil, err
-	}
+func runCodexTurn(realCodex, workspace, prompt, lastMessagePath string, codexArgs []string) (*turnResult, error) {
 	fmt.Printf("\n=== Starting Turn ===\n%s %s\n", realCodex, strings.Join(quoteArgs(codexArgs), " "))
 	cmd := exec.Command(realCodex, codexArgs...)
 	cmd.Dir = workspace
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	exitCode := 0
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return &turnResult{
-				ReturnCode:      exitErr.ExitCode(),
-				PromptPath:      promptPath,
-				LastMessagePath: codexArgs[len(codexArgs)-2],
-			}, nil
+			exitCode = exitErr.ExitCode()
+		} else {
+			return nil, err
 		}
+	}
+	message, err := os.ReadFile(lastMessagePath)
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	return &turnResult{
-		ReturnCode:      0,
-		PromptPath:      promptPath,
-		LastMessagePath: codexArgs[len(codexArgs)-2],
+		ReturnCode:  exitCode,
+		LastMessage: string(message),
 	}, nil
 }
 
-func runInteractiveCodexTurn(realCodex, workspace, prompt, promptPath, lastMessagePath string, codexArgs []string, sessionIDHint string) (*turnResult, error) {
-	if err := os.WriteFile(promptPath, []byte(prompt), 0o644); err != nil {
-		return nil, err
-	}
+func runInteractiveCodexTurn(realCodex, workspace string, codexArgs []string, sessionIDHint string) (*turnResult, error) {
 	startedAt := time.Now()
 	beforeInventory, err := snapshotSessionInventory(workspace)
 	if err != nil {
@@ -94,7 +88,7 @@ func runInteractiveCodexTurn(realCodex, workspace, prompt, promptPath, lastMessa
 	cmd.Dir = workspace
 	if err := runAttachedInteractiveCommand(cmd); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			result, lookupErr := collectInteractiveTurnResult(workspace, beforeInventory, startedAt, sessionIDHint, promptPath, lastMessagePath, exitErr.ExitCode())
+			result, lookupErr := collectInteractiveTurnResult(workspace, beforeInventory, startedAt, sessionIDHint, exitErr.ExitCode())
 			if lookupErr != nil {
 				return nil, lookupErr
 			}
@@ -102,7 +96,7 @@ func runInteractiveCodexTurn(realCodex, workspace, prompt, promptPath, lastMessa
 		}
 		return nil, err
 	}
-	return collectInteractiveTurnResult(workspace, beforeInventory, startedAt, sessionIDHint, promptPath, lastMessagePath, 0)
+	return collectInteractiveTurnResult(workspace, beforeInventory, startedAt, sessionIDHint, 0)
 }
 
 func runAttachedInteractiveCommand(cmd *exec.Cmd) error {
@@ -157,35 +151,25 @@ func runAttachedInteractiveCommand(cmd *exec.Cmd) error {
 	return waitErr
 }
 
-func collectInteractiveTurnResult(workspace string, beforeInventory sessionInventory, startedAt time.Time, sessionIDHint, promptPath, lastMessagePath string, returnCode int) (*turnResult, error) {
+func collectInteractiveTurnResult(workspace string, beforeInventory sessionInventory, startedAt time.Time, sessionIDHint string, returnCode int) (*turnResult, error) {
 	artifact, err := findTurnSessionArtifact(workspace, beforeInventory, startedAt, sessionIDHint)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(lastMessagePath, []byte(artifact.LastAgentMessage), 0o644); err != nil {
-		return nil, err
-	}
 	return &turnResult{
-		ReturnCode:      returnCode,
-		PromptPath:      promptPath,
-		LastMessagePath: lastMessagePath,
-		SessionID:       artifact.SessionID,
-		SessionPath:     artifact.SessionPath,
+		ReturnCode:  returnCode,
+		LastMessage: artifact.LastAgentMessage,
+		SessionID:   artifact.SessionID,
+		SessionPath: artifact.SessionPath,
 	}, nil
 }
 
-func runAction(workspace, logPath string, action PostTurnAction) error {
+func runAction(workspace string, action PostTurnAction) error {
 	fmt.Printf("\n=== Post-Turn Action (%s) ===\n%s\n", action.Kind, action.Command)
-	logFile, err := os.Create(logPath)
-	if err != nil {
-		return err
-	}
-	defer logFile.Close()
-	writer := io.MultiWriter(os.Stdout, logFile)
 	cmd := exec.Command("/bin/zsh", "-lc", action.Command)
 	cmd.Dir = workspace
-	cmd.Stdout = writer
-	cmd.Stderr = writer
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 

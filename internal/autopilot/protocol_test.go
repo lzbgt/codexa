@@ -7,6 +7,7 @@ import (
 
 func TestExtractReport(t *testing.T) {
 	reportText := `
+AUTO_MODE_NEXT=continue
 AUTO_REPORT_JSON_BEGIN
 {
   "auto_mode_next": "continue",
@@ -37,13 +38,25 @@ AUTO_REPORT_JSON_END
 	}
 }
 
-func TestProtocolRepairPromptIncludesMarkers(t *testing.T) {
-	prompt := protocolRepairPrompt(assertionError("missing report"))
-	if !strings.Contains(prompt, beginMarker) || !strings.Contains(prompt, endMarker) {
-		t.Fatalf("repair prompt did not include required markers")
+func TestExtractReportDefaultsToContinueWithoutFooter(t *testing.T) {
+	report, err := extractReport("Implemented the CI workflow and updated TODOS.")
+	if err != nil {
+		t.Fatalf("extractReport returned error: %v", err)
 	}
-	if !strings.Contains(prompt, "Do not redo the analysis.") {
-		t.Fatalf("repair prompt did not include repair guidance")
+	if report.AutoModeNext != "continue" {
+		t.Fatalf("unexpected auto_mode_next: %q", report.AutoModeNext)
+	}
+	if !strings.Contains(report.Summary, "Implemented the CI workflow") {
+		t.Fatalf("unexpected fallback summary: %q", report.Summary)
+	}
+}
+
+func TestProtocolInstructionsMentionDefaultContinue(t *testing.T) {
+	text := protocolInstructions()
+	for _, want := range []string{"AUTO_MODE_NEXT=continue", "AUTO_CONTINUE_MODE=continue|stop", "default to continuing"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("protocol instructions missing %q", want)
+		}
 	}
 }
 

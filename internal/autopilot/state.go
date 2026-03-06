@@ -9,20 +9,21 @@ import (
 )
 
 type State struct {
-	Workspace          string      `json:"workspace"`
-	InitialPrompt      string      `json:"initial_prompt"`
-	Strategy           string      `json:"strategy"`
-	CreatedAt          string      `json:"created_at"`
-	UpdatedAt          string      `json:"updated_at"`
-	TurnIndex          int         `json:"turn_index"`
-	SessionStarted     bool        `json:"session_started"`
-	ExplicitSessionID  string      `json:"explicit_session_id,omitempty"`
-	LastSessionID      string      `json:"last_session_id,omitempty"`
-	LastSessionPath    string      `json:"last_session_path,omitempty"`
-	PendingUserPrompts []string    `json:"pending_user_prompts"`
-	LastReport         *AutoReport `json:"last_report,omitempty"`
-	LastMessagePath    string      `json:"last_message_path,omitempty"`
-	LastPromptPath     string      `json:"last_prompt_path,omitempty"`
+	Workspace            string      `json:"workspace"`
+	InitialPrompt        string      `json:"initial_prompt"`
+	Strategy             string      `json:"strategy"`
+	CreatedAt            string      `json:"created_at"`
+	UpdatedAt            string      `json:"updated_at"`
+	TurnIndex            int         `json:"turn_index"`
+	SessionStarted       bool        `json:"session_started"`
+	ExplicitSessionID    string      `json:"explicit_session_id,omitempty"`
+	LastSessionID        string      `json:"last_session_id,omitempty"`
+	LastSessionPath      string      `json:"last_session_path,omitempty"`
+	LastAssistantMessage string      `json:"last_assistant_message,omitempty"`
+	PendingUserPrompts   []string    `json:"pending_user_prompts"`
+	LastReport           *AutoReport `json:"last_report,omitempty"`
+	LastMessagePath      string      `json:"last_message_path,omitempty"`
+	LastPromptPath       string      `json:"last_prompt_path,omitempty"`
 }
 
 type StateDirs struct {

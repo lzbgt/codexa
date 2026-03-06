@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -13,7 +12,10 @@ type App struct {
 	realCodex string
 }
 
-const maxProtocolRepairAttempts = 3
+type reportResolution struct {
+	Report *AutoReport
+	Result *turnResult
+}
 
 func NewApp() (*App, error) {
 	return &App{}, nil
@@ -44,209 +46,101 @@ func (a *App) Run(args []string) int {
 		return runPassthrough(a.realCodex, inv.ForwardArgs)
 	}
 
-	stateDir := filepath.Join(inv.Workspace, cfg.StateDirName)
-	dirs, err := ensureStateDirs(stateDir)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
-	runtime := newRuntimeStatus(inv, dirs.Base, a.realCodex)
-	runtimePath := runtimeStatusPath(dirs)
-	if err := runtime.save(runtimePath); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
 	fail := func(err error) int {
-		runtime.setPhase("error", err.Error())
-		_ = runtime.save(runtimePath)
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	statePath := filepath.Join(dirs.Base, "session_state.json")
+
 	var state *State
-	switch {
-	case inv.Mode == modeInteractiveBare || shouldReuseExistingStateForInteractiveResume(inv):
-		state, err = loadStateIfExists(statePath)
-		if err != nil {
-			return fail(err)
-		}
-	case shouldBootstrapInteractiveResume(inv):
-		state = nil
-	default:
-		state, err = loadOrCreateState(statePath, inv.Workspace, inv.Prompt, "hybrid", inv.ExplicitSessionID)
-		if err != nil {
-			return fail(err)
-		}
-	}
-	if state != nil && inv.Mode != modeInteractive && inv.Mode != modeInteractiveResume && inv.Mode != modeInteractiveBare {
-		fmt.Printf("Workspace: %s\nState dir: %s\nReal codex: %s\nMode: %s\n", inv.Workspace, dirs.Base, a.realCodex, inv.Mode)
-	}
-	if state != nil {
-		runtime.trackState(state)
-		runtime.setPhase("ready", "wrapper state loaded before launching the next turn")
-		if err := runtime.save(runtimePath); err != nil {
-			return fail(err)
-		}
-		if err := state.save(statePath); err != nil {
-			return fail(err)
+	if strings.TrimSpace(inv.Prompt) != "" {
+		state = newState(inv.Workspace, inv.Prompt, "hybrid", inv.ExplicitSessionID)
+		if inv.ExplicitSessionID != "" {
+			state.LastSessionID = inv.ExplicitSessionID
 		}
 	}
 
 	for {
 		if state == nil {
-			runtime.setPhase("bootstrapping", "launching first interactive session before autopilot state exists")
-			if err := runtime.save(runtimePath); err != nil {
-				return fail(err)
-			}
-			var bootstrapResult *turnResult
-			bootstrapResult, state, err = a.bootstrapInteractiveState(inv, dirs, statePath)
+			snapshotBefore := captureGitSnapshot(inv.Workspace)
+			bootstrapResult, bootstrapState, err := a.bootstrapInteractiveState(inv)
 			if err != nil {
 				return fail(err)
 			}
-			runtime.trackState(state)
-			runtime.setPhase("repair_or_decide", "first interactive session finished; extracting autopilot report")
-			if err := runtime.save(runtimePath); err != nil {
-				return fail(err)
-			}
-			report, repairedResult, err := a.extractOrRepairReport(inv, state, dirs, bootstrapResult)
+			state = bootstrapState
+			resolution, err := a.extractReportResolution(inv, state, bootstrapResult)
 			if err != nil {
 				return fail(err)
 			}
-			state.LastReport = report
-			state.LastMessagePath = repairedResult.LastMessagePath
-			state.LastPromptPath = repairedResult.PromptPath
-			if repairedResult.SessionID != "" {
-				state.LastSessionID = repairedResult.SessionID
+			state.LastReport = resolution.Report
+			state.LastAssistantMessage = stripReportBlock(bootstrapResult.LastMessage)
+			if resolution.Result.SessionID != "" {
+				state.LastSessionID = resolution.Result.SessionID
 			}
-			if repairedResult.SessionPath != "" {
-				state.LastSessionPath = repairedResult.SessionPath
+			if resolution.Result.SessionPath != "" {
+				state.LastSessionPath = resolution.Result.SessionPath
 			}
-			runtime.trackState(state)
-			reportPath := filepath.Join(dirs.Reports, fmt.Sprintf("turn-%04d.json", state.TurnIndex))
-			if err := writeJSON(reportPath, report); err != nil {
+			snapshotAfter := captureGitSnapshot(inv.Workspace)
+			if err := executePostTurnActions(inv.Workspace, state.TurnIndex, resolution.Report, snapshotBefore, snapshotAfter); err != nil {
 				return fail(err)
 			}
-			if err := state.save(statePath); err != nil {
-				return fail(err)
-			}
-			decision := postTurnDecision(cfg.PauseWindowSeconds, report, &state.PendingUserPrompts)
-			runtime.LastDecision = decision
-			runtime.setPhase("decision_made", fmt.Sprintf("turn %d completed with decision %s", state.TurnIndex, decision))
-			if err := state.save(statePath); err != nil {
-				return fail(err)
-			}
-			if err := runtime.save(runtimePath); err != nil {
-				return fail(err)
-			}
+			decision := postTurnDecision(cfg.PauseWindowSeconds, resolution.Report, &state.PendingUserPrompts)
 			if decision == "stop" {
-				runtime.setPhase("stopped", fmt.Sprintf("wrapper stopped after turn %d because the backend decision was stop", state.TurnIndex))
-				_ = runtime.save(runtimePath)
-				fmt.Printf("\n=== Wrapper Stop ===\nStopping after turn %d. Last report: %s\n", state.TurnIndex, reportPath)
+				fmt.Printf("\n=== Wrapper Stop ===\nStopping after turn %d.\n", state.TurnIndex)
 				return 0
 			}
 			continue
 		}
 
 		state.TurnIndex++
-		runtime.trackState(state)
-		runtime.LastTurnIndex = state.TurnIndex
-		runtime.setPhase("running_turn", fmt.Sprintf("starting turn %d", state.TurnIndex))
-		if err := runtime.save(runtimePath); err != nil {
-			return fail(err)
-		}
 		snapshotBefore := captureGitSnapshot(inv.Workspace)
-		prompt := buildPrompt(state, state.LastReport, snapshotBefore, cfg.SkillHint)
-		promptPath := filepath.Join(dirs.Prompts, fmt.Sprintf("turn-%04d.md", state.TurnIndex))
-		messagePath := filepath.Join(dirs.Messages, fmt.Sprintf("turn-%04d.md", state.TurnIndex))
-		state.LastPromptPath = promptPath
-		state.LastMessagePath = ""
-		if err := state.save(statePath); err != nil {
-			return fail(err)
-		}
-
-		result, err := a.runSessionTurn(inv, state, inv.Workspace, prompt, promptPath, messagePath)
+		prompt := buildPrompt(state, snapshotBefore, cfg.SkillHint)
+		result, err := a.runSessionTurn(inv, state, inv.Workspace, prompt)
 		if err != nil {
 			return fail(err)
 		}
 		state.SessionStarted = true
 		state.PendingUserPrompts = nil
-		state.LastMessagePath = result.LastMessagePath
+		state.LastAssistantMessage = stripReportBlock(result.LastMessage)
 		if result.SessionID != "" {
 			state.LastSessionID = result.SessionID
 		}
 		if result.SessionPath != "" {
 			state.LastSessionPath = result.SessionPath
 		}
-		runtime.trackState(state)
-		runtime.setPhase("repair_or_decide", fmt.Sprintf("turn %d finished; extracting autopilot report", state.TurnIndex))
-		if err := runtime.save(runtimePath); err != nil {
-			return fail(err)
-		}
-		if err := state.save(statePath); err != nil {
-			return fail(err)
-		}
 		if result.ReturnCode != 0 {
-			runtime.setPhase("error", fmt.Sprintf("codex exited with status %d", result.ReturnCode))
-			_ = runtime.save(runtimePath)
 			fmt.Fprintf(os.Stderr, "codex exited with status %d\n", result.ReturnCode)
 			return result.ReturnCode
 		}
 
-		report, result, err := a.extractOrRepairReport(inv, state, dirs, result)
+		resolution, err := a.extractReportResolution(inv, state, result)
 		if err != nil {
 			return fail(err)
 		}
-		state.LastMessagePath = result.LastMessagePath
-		state.LastPromptPath = result.PromptPath
-		if result.SessionID != "" {
-			state.LastSessionID = result.SessionID
+		state.LastReport = resolution.Report
+		if resolution.Result.SessionID != "" {
+			state.LastSessionID = resolution.Result.SessionID
 		}
-		if result.SessionPath != "" {
-			state.LastSessionPath = result.SessionPath
-		}
-		runtime.trackState(state)
-		reportPath := filepath.Join(dirs.Reports, fmt.Sprintf("turn-%04d.json", state.TurnIndex))
-		if err := writeJSON(reportPath, report); err != nil {
-			return fail(err)
-		}
-		state.LastReport = report
-		if err := state.save(statePath); err != nil {
-			return fail(err)
+		if resolution.Result.SessionPath != "" {
+			state.LastSessionPath = resolution.Result.SessionPath
 		}
 
 		snapshotAfter := captureGitSnapshot(inv.Workspace)
-		if err := executePostTurnActions(inv.Workspace, dirs, state.TurnIndex, report, snapshotBefore, snapshotAfter); err != nil {
+		if err := executePostTurnActions(inv.Workspace, state.TurnIndex, resolution.Report, snapshotBefore, snapshotAfter); err != nil {
 			return fail(err)
 		}
 
-		decision := postTurnDecision(cfg.PauseWindowSeconds, report, &state.PendingUserPrompts)
-		runtime.LastDecision = decision
-		runtime.setPhase("decision_made", fmt.Sprintf("turn %d completed with decision %s", state.TurnIndex, decision))
-		if err := state.save(statePath); err != nil {
-			return fail(err)
-		}
-		if err := runtime.save(runtimePath); err != nil {
-			return fail(err)
-		}
+		decision := postTurnDecision(cfg.PauseWindowSeconds, resolution.Report, &state.PendingUserPrompts)
 		if decision == "stop" {
-			runtime.setPhase("stopped", fmt.Sprintf("wrapper stopped after turn %d because the backend decision was stop", state.TurnIndex))
-			_ = runtime.save(runtimePath)
-			fmt.Printf("\n=== Wrapper Stop ===\nStopping after turn %d. Last report: %s\n", state.TurnIndex, reportPath)
+			fmt.Printf("\n=== Wrapper Stop ===\nStopping after turn %d.\n", state.TurnIndex)
 			return 0
-		}
-		runtime.setPhase("continuing", fmt.Sprintf("wrapper will continue after turn %d", state.TurnIndex))
-		if err := runtime.save(runtimePath); err != nil {
-			return fail(err)
 		}
 	}
 }
 
-func (a *App) bootstrapInteractiveState(inv Invocation, dirs StateDirs, statePath string) (*turnResult, *State, error) {
+func (a *App) bootstrapInteractiveState(inv Invocation) (*turnResult, *State, error) {
 	turnIndex := 1
 	startedAt := time.Now()
-	promptPath := filepath.Join(dirs.Prompts, fmt.Sprintf("turn-%04d-bootstrap.md", turnIndex))
-	messagePath := filepath.Join(dirs.Messages, fmt.Sprintf("turn-%04d-bootstrap.md", turnIndex))
-	result, err := runInteractiveCodexTurn(a.realCodex, inv.Workspace, "", promptPath, messagePath, inv.initialInteractiveArgs(""), "")
+	result, err := runInteractiveCodexTurn(a.realCodex, inv.Workspace, inv.initialInteractiveArgs(""), "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -272,29 +166,18 @@ func (a *App) bootstrapInteractiveState(inv Invocation, dirs StateDirs, statePat
 	state.SessionStarted = true
 	state.LastSessionID = result.SessionID
 	state.LastSessionPath = result.SessionPath
-	state.LastPromptPath = promptPath
-	state.LastMessagePath = messagePath
-	if err := state.save(statePath); err != nil {
-		return nil, nil, err
-	}
 	return result, state, nil
 }
 
 func shouldReuseExistingStateForInteractiveResume(inv Invocation) bool {
-	if inv.Mode != modeInteractiveResume || strings.TrimSpace(inv.Prompt) != "" {
-		return false
-	}
-	return inv.ResumeTarget == "--last" && inv.ExplicitSessionID == ""
+	return false
 }
 
 func shouldBootstrapInteractiveResume(inv Invocation) bool {
-	if inv.Mode != modeInteractiveResume || strings.TrimSpace(inv.Prompt) != "" {
-		return false
-	}
-	return !shouldReuseExistingStateForInteractiveResume(inv)
+	return inv.Mode == modeInteractiveResume && strings.TrimSpace(inv.Prompt) == ""
 }
 
-func (a *App) runSessionTurn(inv Invocation, state *State, workspace, prompt, promptPath, messagePath string) (*turnResult, error) {
+func (a *App) runSessionTurn(inv Invocation, state *State, workspace, prompt string) (*turnResult, error) {
 	if inv.Mode == modeInteractive || inv.Mode == modeInteractiveResume || inv.Mode == modeInteractiveBare {
 		var cmdArgs []string
 		sessionHint := state.LastSessionID
@@ -306,8 +189,18 @@ func (a *App) runSessionTurn(inv Invocation, state *State, workspace, prompt, pr
 		} else {
 			cmdArgs = inv.resumeInteractiveArgs(prompt, state.LastSessionID)
 		}
-		return runInteractiveCodexTurn(a.realCodex, workspace, prompt, promptPath, messagePath, cmdArgs, sessionHint)
+		return runInteractiveCodexTurn(a.realCodex, workspace, cmdArgs, sessionHint)
 	}
+
+	messageFile, err := os.CreateTemp("", "codexa-last-message-*.md")
+	if err != nil {
+		return nil, err
+	}
+	messagePath := messageFile.Name()
+	if err := messageFile.Close(); err != nil {
+		return nil, err
+	}
+	defer os.Remove(messagePath)
 
 	var cmdArgs []string
 	if !state.SessionStarted {
@@ -315,59 +208,30 @@ func (a *App) runSessionTurn(inv Invocation, state *State, workspace, prompt, pr
 	} else {
 		cmdArgs = inv.resumeCommandArgs(messagePath)
 	}
-	return runCodexTurn(a.realCodex, workspace, prompt, promptPath, cmdArgs)
+	return runCodexTurn(a.realCodex, workspace, prompt, messagePath, cmdArgs)
 }
 
-func (a *App) extractOrRepairReport(inv Invocation, state *State, dirs StateDirs, result *turnResult) (*AutoReport, *turnResult, error) {
-	current := result
-	for repairAttempt := 0; repairAttempt <= maxProtocolRepairAttempts; repairAttempt++ {
-		rawMessage, err := os.ReadFile(current.LastMessagePath)
-		if err != nil {
-			return nil, nil, err
-		}
-		report, err := extractReport(string(rawMessage))
-		if err == nil {
-			return report, current, nil
-		}
-		if repairAttempt == maxProtocolRepairAttempts {
-			return nil, nil, fmt.Errorf("could not recover a valid autopilot report after %d repair attempts: %w", maxProtocolRepairAttempts, err)
-		}
-
-		fmt.Printf("\n=== Protocol Repair ===\nRepairing missing or invalid report for turn %d: %v\n", state.TurnIndex, err)
-		repairPrompt := protocolRepairPrompt(err)
-		repairPromptPath := filepath.Join(dirs.Prompts, fmt.Sprintf("turn-%04d-repair-%02d.md", state.TurnIndex, repairAttempt+1))
-		repairMessagePath := filepath.Join(dirs.Messages, fmt.Sprintf("turn-%04d-repair-%02d.md", state.TurnIndex, repairAttempt+1))
-		repairResult, repairErr := a.runSessionTurn(inv, state, state.Workspace, repairPrompt, repairPromptPath, repairMessagePath)
-		if repairErr != nil {
-			return nil, nil, repairErr
-		}
-		if repairResult.ReturnCode != 0 {
-			return nil, nil, fmt.Errorf("codex exited with status %d while repairing missing report", repairResult.ReturnCode)
-		}
-		state.LastPromptPath = repairPromptPath
-		state.LastMessagePath = repairResult.LastMessagePath
-		if repairResult.SessionID != "" {
-			state.LastSessionID = repairResult.SessionID
-		}
-		if repairResult.SessionPath != "" {
-			state.LastSessionPath = repairResult.SessionPath
-		}
-		current = repairResult
+func (a *App) extractReportResolution(inv Invocation, state *State, result *turnResult) (*reportResolution, error) {
+	report, err := extractReport(result.LastMessage)
+	if err != nil {
+		return nil, err
 	}
-	return nil, nil, fmt.Errorf("unreachable protocol repair exit for turn %d", state.TurnIndex)
+	return &reportResolution{
+		Report: report,
+		Result: result,
+	}, nil
 }
 
-func executePostTurnActions(workspace string, dirs StateDirs, turnIndex int, report *AutoReport, before, after GitSnapshot) error {
+func executePostTurnActions(workspace string, turnIndex int, report *AutoReport, before, after GitSnapshot) error {
 	if !after.Dirty && len(report.PostTurnActions) == 0 {
 		return nil
 	}
 	needsFinalization := after.hasNewCodeChangesComparedTo(before)
 	if needsFinalization && len(report.PostTurnActions) == 0 {
-		return fmt.Errorf("repo is still dirty after a source-code turn, but the report did not provide post_turn_actions")
+		return fmt.Errorf("repo is still dirty after turn %d, but the reply did not provide post_turn_actions", turnIndex)
 	}
-	for index, action := range report.PostTurnActions {
-		logPath := filepath.Join(dirs.ActionLogs, fmt.Sprintf("turn-%04d-%02d-%s.log", turnIndex, index+1, sanitize(action.Kind)))
-		if err := runAction(workspace, logPath, action); err != nil {
+	for _, action := range report.PostTurnActions {
+		if err := runAction(workspace, action); err != nil {
 			return err
 		}
 	}
@@ -388,8 +252,11 @@ func postTurnDecision(pauseSeconds int, report *AutoReport, queue *[]string) str
 		return report.AutoModeNext
 	}
 	fmt.Printf("Next turn decision in %ds. Press Enter now to open operator input mode.\n", pauseSeconds)
-	if waitForOperatorTrigger(time.Duration(pauseSeconds) * time.Second) {
-		consumeOperatorTrigger()
+	switch waitForOperatorTrigger(time.Duration(pauseSeconds) * time.Second) {
+	case operatorTriggerEnter:
+		return operatorLoop(report, queue)
+	case operatorTriggerInterrupt:
+		fmt.Println("\nOperator input mode requested via Ctrl+C.")
 		return operatorLoop(report, queue)
 	}
 	return report.AutoModeNext
@@ -424,13 +291,4 @@ func operatorLoop(report *AutoReport, queue *[]string) string {
 			fmt.Println("Queued.")
 		}
 	}
-}
-
-func sanitize(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	value = strings.ReplaceAll(value, " ", "-")
-	if value == "" {
-		return "action"
-	}
-	return value
 }

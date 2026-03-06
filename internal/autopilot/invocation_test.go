@@ -15,6 +15,16 @@ func TestParseRootPromptInvocation(t *testing.T) {
 	}
 }
 
+func TestParseNoArgsAsInteractiveBare(t *testing.T) {
+	inv, err := parseInvocation(nil, "/tmp/repo")
+	if err != nil {
+		t.Fatalf("parseInvocation returned error: %v", err)
+	}
+	if inv.Mode != modeInteractiveBare {
+		t.Fatalf("expected interactive bare mode, got %s", inv.Mode)
+	}
+}
+
 func TestParseBareInteractiveInvocation(t *testing.T) {
 	inv, err := parseInvocation([]string{"--yolo", "--search"}, "/tmp/repo")
 	if err != nil {

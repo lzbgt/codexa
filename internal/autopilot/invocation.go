@@ -58,6 +58,7 @@ func parseInvocation(args []string, cwd string) (Invocation, error) {
 		Workspace:    cwd,
 	}
 	if len(args) == 0 {
+		inv.Mode = modeInteractiveBare
 		return inv, nil
 	}
 

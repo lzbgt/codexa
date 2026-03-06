@@ -7,9 +7,9 @@ The wrapper is designed for this workflow:
 - visible Codex output in the same terminal
 - argument forwarding shaped like the original interactive `codex` CLI
 - PTY-backed interactive child sessions for root prompt and root `resume`
-- automatic continuation after the interactive child exits, using the last report from Codex's own session artifacts
+- automatic continuation after the interactive child exits, using Codex's own session artifacts
 - occasional operator engagement between turns
-- repo-local observability under `.codex-autopilot/`
+- no repo-local wrapper cache or state directory
 - backend-decided verification, commit, and push via structured `post_turn_actions`
 
 ## Build
@@ -26,7 +26,7 @@ The built binary lives at [bin/codexa](/Users/zongbaolu/work/codex-hybrid-autopi
 1. Build the binary.
 2. Make sure the real `codex` binary is on `PATH`.
 3. Run the wrapper from the target repository with a plain prompt or `exec` form.
-4. Let the wrapper save its state under `.codex-autopilot/` in that target repository.
+4. Let the wrapper read/write continuation state through the live Codex session only. The repo itself is not used as a wrapper cache.
 
 Example:
 
@@ -88,15 +88,13 @@ The wrapper resolves the real Codex binary from `PATH`. If the wrapper itself is
 
 1. For bare root, root prompt, and root `resume` entrypoints, the wrapper launches the real interactive `codex` child attached to your terminal.
 2. When that child exits, the wrapper reads the latest matching session JSONL under `~/.codex/sessions/` and extracts the last assistant message.
-3. If the first launch was bare `codexa [root args]`, the wrapper derives the project objective from that finished session's first user message and bootstraps `.codex-autopilot/session_state.json` from it.
-4. It saves the turn prompt, extracted last assistant message, and parsed report under `.codex-autopilot/`.
-5. It parses the required JSON footer between `AUTO_REPORT_JSON_BEGIN` and `AUTO_REPORT_JSON_END`.
-6. It executes any backend-provided `post_turn_actions` after the turn.
+3. If the first launch was bare `codexa [root args]`, the wrapper derives the project objective from that finished session's first user message.
+4. It quotes the last assistant response into the next prompt, asks Codex to identify new tasks, merge and reweight them against current TODOs, and execute the highest-leverage task.
+5. It reads `AUTO_MODE_NEXT=continue|stop` from the assistant reply. If that marker is missing, it defaults to `continue`.
+6. If the reply includes a structured JSON footer, the wrapper also consumes `post_turn_actions`.
 7. It pauses briefly for operator input, then either resumes the same interactive session or stops.
 
-If Codex forgets the JSON footer or emits an invalid report, the wrapper immediately resumes the same session with a protocol-repair prompt instead of stopping. The next real turn only starts after a valid report has been recovered.
-
-When you start with `codexa --yolo resume --last` and omit a fresh prompt, the wrapper reuses the previously recorded objective from `.codex-autopilot/session_state.json` when it exists. By contrast, `codexa --yolo resume` and `codexa --yolo resume <session-id>` always launch the real Codex resume flow first, then bootstrap wrapper state from the first resumed prompt/turn so the user-selected session is honored.
+When you start with `codexa --yolo resume --last` and omit a fresh prompt, the wrapper does not depend on any saved wrapper state. It simply continues from the resumed Codex session and derives the next turn from the latest session artifact.
 
 For `exec` and `exec resume`, the wrapper keeps using non-interactive Codex commands and `-o/--output-last-message` capture as before.
 
@@ -114,7 +112,7 @@ Example:
 ]
 ```
 
-If a turn leaves source-code changes dirty and the report omits `post_turn_actions`, the wrapper stops instead of guessing.
+If a turn leaves source-code changes dirty and the reply omits `post_turn_actions`, the wrapper stops instead of guessing.
 
 ## Operator engagement
 
@@ -129,30 +127,11 @@ Operator input mode supports:
 
 ## Observability
 
-Each workspace gets:
+The authoritative runtime state is the live Codex transcript under `~/.codex/sessions/`.
 
-- `.codex-autopilot/runtime.json`
-- `.codex-autopilot/session_state.json`
-- `.codex-autopilot/prompts/turn-XXXX.md`
-- `.codex-autopilot/messages/turn-XXXX.md`
-- `.codex-autopilot/reports/turn-XXXX.json`
-- `.codex-autopilot/action-logs/turn-XXXX-YY-*.log`
-
-`runtime.json` is written immediately when `codexa` enters wrapper mode, before the first interactive child starts. If that file does not appear in the target repo right after `codexa --yolo ...` launches, the session was not started under wrapper control.
+`codexa` does not create a repo-local `.codex-autopilot/` directory anymore. To inspect the current session, read the matching session JSONL for the target workspace.
 
 ## Configuration
-
-Optional workspace-local config lives at `.codex-autopilot/config.json`.
-
-Example:
-
-```json
-{
-  "pause_window_seconds": 8,
-  "skill_hint": true,
-  "real_codex_bin": "/opt/homebrew/bin/codex"
-}
-```
 
 Environment overrides:
 

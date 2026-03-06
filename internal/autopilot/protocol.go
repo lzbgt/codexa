@@ -13,6 +13,8 @@ const (
 	endMarker   = "AUTO_REPORT_JSON_END"
 )
 
+var modeNextPattern = regexp.MustCompile(`(?m)^\s*AUTO_(?:MODE_NEXT|CONTINUE_MODE)=(continue|stop)\s*$`)
+
 type Task struct {
 	Priority string `json:"priority"`
 	Task     string `json:"task"`
@@ -67,19 +69,54 @@ func (r *AutoReport) Validate() error {
 
 var reportPattern = regexp.MustCompile(`(?s)` + regexp.QuoteMeta(beginMarker) + `\s*(\{.*\})\s*` + regexp.QuoteMeta(endMarker))
 
+func extractModeNext(text string) (string, error) {
+	matches := modeNextPattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 || len(matches[len(matches)-1]) != 2 {
+		return "", errors.New("could not find AUTO_MODE_NEXT or AUTO_CONTINUE_MODE line")
+	}
+	return matches[len(matches)-1][1], nil
+}
+
+func stripReportBlock(text string) string {
+	text = reportPattern.ReplaceAllString(text, "")
+	text = modeNextPattern.ReplaceAllString(text, "")
+	return strings.TrimSpace(text)
+}
+
 func extractReport(text string) (*AutoReport, error) {
 	match := reportPattern.FindStringSubmatch(text)
-	if len(match) != 2 {
-		return nil, errors.New("could not find AUTO_REPORT_JSON block")
+	if len(match) == 2 {
+		var report AutoReport
+		if err := json.Unmarshal([]byte(match[1]), &report); err != nil {
+			return nil, err
+		}
+		if modeNext, err := extractModeNext(text); err == nil && report.AutoModeNext == "" {
+			report.AutoModeNext = modeNext
+		}
+		if err := report.Validate(); err != nil {
+			return nil, err
+		}
+		return &report, nil
 	}
-	var report AutoReport
-	if err := json.Unmarshal([]byte(match[1]), &report); err != nil {
-		return nil, err
+
+	modeNext, err := extractModeNext(text)
+	if err != nil {
+		modeNext = "continue"
 	}
-	if err := report.Validate(); err != nil {
-		return nil, err
+	summary := stripReportBlock(text)
+	if summary == "" {
+		summary = "No structured summary was provided; the wrapper will continue based on the assistant's last reply."
 	}
-	return &report, nil
+	return &AutoReport{
+		AutoModeNext:          modeNext,
+		Summary:               summary,
+		RecommendedNextPrompt: "Re-read the repo state, merge the quoted last response into current TODOs, reweight the remaining work, and execute the highest-leverage task.",
+		ReweightingRationale:  "Fallback derived from the assistant's last reply because no structured JSON report was provided.",
+		Verification: VerificationSummary{
+			Status:  "unknown",
+			Summary: "No structured verification summary was provided in the last reply.",
+		},
+	}, nil
 }
 
 func protocolInstructions() string {
@@ -106,12 +143,16 @@ func protocolInstructions() string {
 	}
 	data, _ := json.MarshalIndent(example, "", "  ")
 	return strings.Join([]string{
-		"At the end of your final response, append a machine-readable JSON report.",
+		"At the end of your final response, append a machine-readable stop/continue marker.",
+		"End your final response with exactly one line: `AUTO_MODE_NEXT=continue` or `AUTO_MODE_NEXT=stop`.",
+		"The wrapper also accepts `AUTO_CONTINUE_MODE=continue|stop` for compatibility, but prefer `AUTO_MODE_NEXT`.",
+		"If source-code changes remain dirty, or if you need the wrapper to execute post-turn actions, also append a machine-readable JSON report.",
 		fmt.Sprintf("Write the exact begin marker on its own line: %s", beginMarker),
 		"Then write valid JSON matching the required shape.",
 		fmt.Sprintf("Write the exact end marker on its own line: %s", endMarker),
-		"If you omit the JSON report or break its schema, the wrapper will immediately resume the same session and ask you to repair the report before any next turn can start.",
+		"If you omit the stop/continue line entirely, the wrapper will default to continuing with the auto-generated next-turn prompt.",
 		"If your turn leaves source-code changes dirty, either finish verification and finalization during the turn or provide exact shell commands in post_turn_actions. The wrapper will execute those commands after your message.",
+		"A clean no-code-change turn may omit the JSON block if the AUTO_MODE_NEXT line is present.",
 		string(data),
 	}, "\n")
 }
@@ -123,8 +164,8 @@ func protocolRepairPrompt(cause error) string {
 		fmt.Fprintf(&b, "Repair cause: %s\n", cause)
 	}
 	b.WriteString("Do not redo the analysis. Do not inspect files unless you must verify whether the repo is dirty before declaring post_turn_actions.\n")
-	b.WriteString("Use your immediately previous reply as the source of truth, preserve its findings/tasks, and emit a corrected machine-readable report now.\n")
-	b.WriteString("Reply with an optional one-line preface plus the exact report block. Do not omit the markers.\n\n")
+	b.WriteString("Use your immediately previous reply as the source of truth, preserve its findings/tasks, and emit a corrected machine-readable footer now.\n")
+	b.WriteString("Reply with an optional one-line preface, the exact AUTO_MODE_NEXT line, and if needed the exact report block. Do not omit required markers.\n\n")
 	b.WriteString(protocolInstructions())
 	b.WriteString("\n")
 	return b.String()

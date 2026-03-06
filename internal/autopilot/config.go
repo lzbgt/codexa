@@ -1,10 +1,7 @@
 package autopilot
 
 import (
-	"encoding/json"
-	"errors"
 	"os"
-	"path/filepath"
 	"strconv"
 )
 
@@ -19,20 +16,12 @@ func defaultConfig() Config {
 	return Config{
 		PauseWindowSeconds: 10,
 		SkillHint:          true,
-		StateDirName:       ".codex-autopilot",
 	}
 }
 
 func loadConfig(workspace string) (Config, error) {
+	_ = workspace
 	cfg := defaultConfig()
-	configPath := filepath.Join(workspace, cfg.StateDirName, "config.json")
-	if data, err := os.ReadFile(configPath); err == nil {
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return Config{}, err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return Config{}, err
-	}
 	if value := os.Getenv("CODEX_AUTOPILOT_PAUSE_SECONDS"); value != "" {
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
@@ -45,9 +34,6 @@ func loadConfig(workspace string) (Config, error) {
 	}
 	if cfg.PauseWindowSeconds < 0 {
 		cfg.PauseWindowSeconds = 0
-	}
-	if cfg.StateDirName == "" {
-		cfg.StateDirName = ".codex-autopilot"
 	}
 	return cfg, nil
 }
