@@ -75,6 +75,7 @@ The key runtime difference is:
 - root prompt and root `resume` forms launch the real interactive `codex` process attached to your terminal
 - that attached child now runs behind a PTY bridge, so fullscreen/inline terminal behavior is much closer to native `codex`
 - after that child process exits, the wrapper reads Codex's session JSONL under `~/.codex/sessions/`, extracts the last assistant message, parses the autopilot report, and decides whether to respawn the session
+- if the assistant forgot the `AUTO_REPORT_JSON` footer, the wrapper auto-resumes the same session with a repair prompt and only proceeds once a valid report is recovered
 - `exec` forms stay fully non-interactive
 
 Pass-through applies to commands such as:

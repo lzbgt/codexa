@@ -110,7 +110,22 @@ func protocolInstructions() string {
 		fmt.Sprintf("Write the exact begin marker on its own line: %s", beginMarker),
 		"Then write valid JSON matching the required shape.",
 		fmt.Sprintf("Write the exact end marker on its own line: %s", endMarker),
+		"If you omit the JSON report or break its schema, the wrapper will immediately resume the same session and ask you to repair the report before any next turn can start.",
 		"If your turn leaves source-code changes dirty, either finish verification and finalization during the turn or provide exact shell commands in post_turn_actions. The wrapper will execute those commands after your message.",
 		string(data),
 	}, "\n")
+}
+
+func protocolRepairPrompt(cause error) string {
+	var b strings.Builder
+	b.WriteString("Your last reply did not include a valid autopilot report.\n")
+	if cause != nil {
+		fmt.Fprintf(&b, "Repair cause: %s\n", cause)
+	}
+	b.WriteString("Do not redo the analysis. Do not inspect files unless you must verify whether the repo is dirty before declaring post_turn_actions.\n")
+	b.WriteString("Use your immediately previous reply as the source of truth, preserve its findings/tasks, and emit a corrected machine-readable report now.\n")
+	b.WriteString("Reply with an optional one-line preface plus the exact report block. Do not omit the markers.\n\n")
+	b.WriteString(protocolInstructions())
+	b.WriteString("\n")
+	return b.String()
 }

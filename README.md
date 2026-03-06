@@ -87,6 +87,8 @@ The wrapper resolves the real Codex binary from `PATH`. If the wrapper itself is
 5. It executes any backend-provided `post_turn_actions` after the turn.
 6. It pauses briefly for operator input, then either resumes the same interactive session or stops.
 
+If Codex forgets the JSON footer or emits an invalid report, the wrapper immediately resumes the same session with a protocol-repair prompt instead of stopping. The next real turn only starts after a valid report has been recovered.
+
 When you start with `codexa --yolo resume --last` and omit a fresh prompt, the wrapper reuses the previously recorded objective from `.codex-autopilot/session_state.json`. If there is no existing wrapper state for that workspace yet, the wrapper stops and asks you to start once with an explicit project goal.
 
 For `exec` and `exec resume`, the wrapper keeps using non-interactive Codex commands and `-o/--output-last-message` capture as before.

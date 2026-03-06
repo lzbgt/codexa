@@ -1,6 +1,9 @@
 package autopilot
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestExtractReport(t *testing.T) {
 	reportText := `
@@ -32,4 +35,20 @@ AUTO_REPORT_JSON_END
 	if len(report.PostTurnActions) != 1 {
 		t.Fatalf("expected 1 post-turn action, got %d", len(report.PostTurnActions))
 	}
+}
+
+func TestProtocolRepairPromptIncludesMarkers(t *testing.T) {
+	prompt := protocolRepairPrompt(assertionError("missing report"))
+	if !strings.Contains(prompt, beginMarker) || !strings.Contains(prompt, endMarker) {
+		t.Fatalf("repair prompt did not include required markers")
+	}
+	if !strings.Contains(prompt, "Do not redo the analysis.") {
+		t.Fatalf("repair prompt did not include repair guidance")
+	}
+}
+
+type assertionError string
+
+func (e assertionError) Error() string {
+	return string(e)
 }

@@ -75,28 +75,7 @@ func (a *App) Run(args []string) int {
 			return 1
 		}
 
-		var result *turnResult
-		if inv.Mode == modeInteractive || inv.Mode == modeInteractiveResume {
-			var cmdArgs []string
-			sessionHint := state.LastSessionID
-			if !state.SessionStarted {
-				cmdArgs = inv.initialInteractiveArgs(prompt)
-				if inv.ExplicitSessionID != "" {
-					sessionHint = inv.ExplicitSessionID
-				}
-			} else {
-				cmdArgs = inv.resumeInteractiveArgs(prompt, state.LastSessionID)
-			}
-			result, err = runInteractiveCodexTurn(a.realCodex, inv.Workspace, prompt, promptPath, messagePath, cmdArgs, sessionHint)
-		} else {
-			var cmdArgs []string
-			if !state.SessionStarted {
-				cmdArgs = inv.initialCommandArgs(messagePath)
-			} else {
-				cmdArgs = inv.resumeCommandArgs(messagePath)
-			}
-			result, err = runCodexTurn(a.realCodex, inv.Workspace, prompt, promptPath, cmdArgs)
-		}
+		result, err := a.runSessionTurn(inv, state, inv.Workspace, prompt, promptPath, messagePath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			return 1
@@ -119,15 +98,18 @@ func (a *App) Run(args []string) int {
 			return result.ReturnCode
 		}
 
-		rawMessage, err := os.ReadFile(result.LastMessagePath)
+		report, result, err := a.extractOrRepairReport(inv, state, dirs, result)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			return 1
 		}
-		report, err := extractReport(string(rawMessage))
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
+		state.LastMessagePath = result.LastMessagePath
+		state.LastPromptPath = result.PromptPath
+		if result.SessionID != "" {
+			state.LastSessionID = result.SessionID
+		}
+		if result.SessionPath != "" {
+			state.LastSessionPath = result.SessionPath
 		}
 		reportPath := filepath.Join(dirs.Reports, fmt.Sprintf("turn-%04d.json", state.TurnIndex))
 		if err := writeJSON(reportPath, report); err != nil {
@@ -155,6 +137,65 @@ func (a *App) Run(args []string) int {
 			fmt.Printf("\n=== Wrapper Stop ===\nStopping after turn %d. Last report: %s\n", state.TurnIndex, reportPath)
 			return 0
 		}
+	}
+}
+
+func (a *App) runSessionTurn(inv Invocation, state *State, workspace, prompt, promptPath, messagePath string) (*turnResult, error) {
+	if inv.Mode == modeInteractive || inv.Mode == modeInteractiveResume {
+		var cmdArgs []string
+		sessionHint := state.LastSessionID
+		if !state.SessionStarted {
+			cmdArgs = inv.initialInteractiveArgs(prompt)
+			if inv.ExplicitSessionID != "" {
+				sessionHint = inv.ExplicitSessionID
+			}
+		} else {
+			cmdArgs = inv.resumeInteractiveArgs(prompt, state.LastSessionID)
+		}
+		return runInteractiveCodexTurn(a.realCodex, workspace, prompt, promptPath, messagePath, cmdArgs, sessionHint)
+	}
+
+	var cmdArgs []string
+	if !state.SessionStarted {
+		cmdArgs = inv.initialCommandArgs(messagePath)
+	} else {
+		cmdArgs = inv.resumeCommandArgs(messagePath)
+	}
+	return runCodexTurn(a.realCodex, workspace, prompt, promptPath, cmdArgs)
+}
+
+func (a *App) extractOrRepairReport(inv Invocation, state *State, dirs StateDirs, result *turnResult) (*AutoReport, *turnResult, error) {
+	current := result
+	for repairAttempt := 0; ; repairAttempt++ {
+		rawMessage, err := os.ReadFile(current.LastMessagePath)
+		if err != nil {
+			return nil, nil, err
+		}
+		report, err := extractReport(string(rawMessage))
+		if err == nil {
+			return report, current, nil
+		}
+
+		fmt.Printf("\n=== Protocol Repair ===\nRepairing missing or invalid report for turn %d: %v\n", state.TurnIndex, err)
+		repairPrompt := protocolRepairPrompt(err)
+		repairPromptPath := filepath.Join(dirs.Prompts, fmt.Sprintf("turn-%04d-repair-%02d.md", state.TurnIndex, repairAttempt+1))
+		repairMessagePath := filepath.Join(dirs.Messages, fmt.Sprintf("turn-%04d-repair-%02d.md", state.TurnIndex, repairAttempt+1))
+		repairResult, repairErr := a.runSessionTurn(inv, state, state.Workspace, repairPrompt, repairPromptPath, repairMessagePath)
+		if repairErr != nil {
+			return nil, nil, repairErr
+		}
+		if repairResult.ReturnCode != 0 {
+			return nil, nil, fmt.Errorf("codex exited with status %d while repairing missing report", repairResult.ReturnCode)
+		}
+		state.LastPromptPath = repairPromptPath
+		state.LastMessagePath = repairResult.LastMessagePath
+		if repairResult.SessionID != "" {
+			state.LastSessionID = repairResult.SessionID
+		}
+		if repairResult.SessionPath != "" {
+			state.LastSessionPath = repairResult.SessionPath
+		}
+		current = repairResult
 	}
 }
 
