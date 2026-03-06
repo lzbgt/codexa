@@ -7,8 +7,9 @@ The wrapper is designed for this workflow:
 - visible Codex output in the same terminal
 - argument forwarding shaped like the original interactive `codex` CLI
 - PTY-backed interactive child sessions for root prompt and root `resume`
-- automatic continuation after the interactive child exits, using Codex's own session artifacts
-- occasional operator engagement between turns
+- automatic continuation inside the same live interactive child
+- Codex itself retains stdin steer and queued-input behavior while a turn is running
+- light wrapper intervention only after a turn finishes
 - no repo-local wrapper cache or state directory
 - one-line stop or continue marker only
 
@@ -26,7 +27,7 @@ The built binary lives at [bin/codexa](/Users/zongbaolu/work/codex-hybrid-autopi
 1. Build the binary.
 2. Make sure the real `codex` binary is on `PATH`.
 3. Run the wrapper from the target repository with a plain prompt or `exec` form.
-4. Let the wrapper read/write continuation state through the live Codex session only. The repo itself is not used as a wrapper cache.
+4. Let the wrapper continue from the live Codex session only. The repo itself is not used as a wrapper cache.
 
 Example:
 
@@ -87,33 +88,31 @@ The wrapper resolves the real Codex binary from `PATH`. If the wrapper itself is
 ## How the turn loop works
 
 1. For bare root, root prompt, and root `resume` entrypoints, the wrapper launches the real interactive `codex` child attached to your terminal.
-2. When that child exits, the wrapper reads the latest matching session JSONL under `~/.codex/sessions/` and extracts the last assistant message.
-3. If the first launch was bare `codexa [root args]`, the wrapper derives the project objective from that finished session's first user message.
-4. It quotes the last assistant response into the next prompt, asks Codex to identify new tasks, merge and reweight them against current TODOs, and execute the highest-leverage task.
-5. It reads `AUTO_MODE_NEXT=continue|stop` from the assistant reply. If that marker is missing, it defaults to `continue`.
+2. The wrapper forces `--no-alt-screen` for its live interactive child so the PTY stream is scrollback-friendly and machine-readable enough to capture the final footer line.
+3. It quotes the last assistant response into the next prompt, asks Codex to identify new tasks, merge and reweight them against current TODOs, and execute the highest-leverage task.
+4. For wrapper-generated turns, it prefers the assistant footer `AUTO_MODE_NEXT=continue|stop` or compatibility `AUTO_CONTINUE_MODE=continue|stop` as the fast-path completion signal.
+5. For user-driven turns that omit the footer, it falls back to the upstream Codex session transcript to recover the last reply and then defaults to continuing unless the footer explicitly said `stop`.
+6. Once the turn is over, the wrapper pauses briefly. If you do nothing it sends one synthetic continuation prompt into the same live session. If you press Enter, it hands control back to the idle Codex child. If you press `Ctrl+C`, it forwards an interrupt to the idle child, matching native Codex exit behavior more closely.
 6. It does not parse JSON reports or execute wrapper-side post-turn actions.
-7. It pauses briefly for operator input, then either resumes the same interactive session or stops.
 
-When you start with `codexa --yolo resume --last` and omit a fresh prompt, the wrapper does not depend on any saved wrapper state. It simply continues from the resumed Codex session and derives the next turn from the latest session artifact.
+When you start with `codexa --yolo resume --last` and omit a fresh prompt, the wrapper still does not depend on any saved wrapper state. The first resumed turn can be completely manual; the wrapper will bootstrap from the live session once that turn finishes.
 
 For `exec` and `exec resume`, the wrapper keeps using non-interactive Codex commands and `-o/--output-last-message` capture as before.
 
-## Operator engagement
+## Interaction model
 
-After each turn, the wrapper prints a short summary. If the pause window expires, it follows the report's `auto_mode_next`. If you hit Enter before the timeout, the wrapper opens operator input mode.
+While the real `codex` child is running, stdin belongs to Codex. If native Codex supports queued steer/input while it is working, `codexa` does not interfere with that.
 
-Operator input mode supports:
+After a turn finishes and the wrapper is idle:
 
-- plain text: queue a user prompt for the next turn
-- `/show`: inspect the queued prompts
-- `/clear`: clear the prompt queue
-- `/stop`: stop after the current turn
+- do nothing: the wrapper auto-continues unless the last reply ended with `AUTO_MODE_NEXT=stop`
+- press Enter: return control to the idle Codex child
+- type a line and press Enter: hand that line to the idle Codex child as the next user prompt
+- press `Ctrl+C`: send an interrupt to the idle Codex child
 
 ## Observability
 
-The authoritative runtime state is the live Codex transcript under `~/.codex/sessions/`.
-
-`codexa` does not create a repo-local `.codex-autopilot/` directory anymore. To inspect the current session, read the matching session JSONL for the target workspace.
+The authoritative runtime state is the live terminal transcript plus the upstream Codex session itself. `codexa` does not create a repo-local `.codex-autopilot/` directory anymore.
 
 ## Configuration
 

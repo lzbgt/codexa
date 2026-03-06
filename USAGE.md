@@ -28,7 +28,7 @@ export CODEX_AUTOPILOT_REAL_BIN=/opt/homebrew/bin/codex
 
 ## 3. Run the wrapper from the target repo
 
-Use a plain prompt if you want the wrapper to start the real interactive Codex child and then orchestrate follow-up turns after that child exits:
+Use a plain prompt if you want the wrapper to start the real interactive Codex child and then orchestrate follow-up turns inside that same live session:
 
 ```bash
 cd /path/to/target/repo
@@ -87,10 +87,10 @@ Autopilot interception applies to:
 The key runtime difference is:
 
 - root prompt and root `resume` forms launch the real interactive `codex` process attached to your terminal
-- bare `codexa --yolo` also launches the real interactive child; when that first session exits, the wrapper derives the objective from the first user message in the session artifact and continues under autopilot
-- that attached child now runs behind a PTY bridge, so fullscreen/inline terminal behavior is much closer to native `codex`
-- after that child process exits, the wrapper reads Codex's session JSONL under `~/.codex/sessions/`, quotes the last assistant message into the next prompt, merges/reweights against current TODOs, and decides whether to respawn the session
-- `AUTO_MODE_NEXT=stop` stops the loop; if no stop/continue marker is present, the wrapper defaults to continuing
+- the attached child runs behind a PTY bridge and `codexa` forces `--no-alt-screen` on that live child so the output stream remains visible and capturable
+- after each wrapper-generated turn, the wrapper prefers the assistant footer line `AUTO_MODE_NEXT=continue|stop` or compatibility `AUTO_CONTINUE_MODE=continue|stop` as the fast completion signal
+- if a user-driven turn omits the footer, the wrapper falls back to the upstream Codex session transcript to recover the last reply, then quotes that reply into the next prompt and continues unless the footer explicitly said `stop`
+- `AUTO_MODE_NEXT=stop` stops the loop; missing marker defaults to `continue`
 - `exec` forms stay fully non-interactive
 
 Pass-through applies to commands such as:
@@ -106,20 +106,20 @@ Those are forwarded directly to the real `codex` binary.
 
 ## 5. Watch the runtime state
 
-The authoritative runtime state is the Codex transcript under `~/.codex/sessions/`.
+The authoritative runtime state is the live terminal transcript plus the upstream Codex session. `codexa` no longer creates a repo-local `.codex-autopilot/` directory.
 
-`codexa` no longer creates a repo-local `.codex-autopilot/` directory. To inspect what happened, find the matching session JSONL for the target workspace and read the last assistant reply there.
+If you resume with `codexa --yolo resume --last` and do not provide a new prompt, the wrapper still does not need any saved wrapper state. The first resumed turn can be fully manual; `codexa` will bootstrap from that live turn after it finishes.
 
-If you resume with `codexa --yolo resume --last` and do not provide a new prompt, the wrapper still does not need any saved wrapper state. It continues from the resumed Codex session itself.
+## 6. Interaction during idle pauses
 
-## 6. Operator engagement
+While the real `codex` child is running, stdin remains Codex’s own stdin, including any native queued steer behavior the upstream CLI supports.
 
 After each turn, the wrapper prints a summary. During the pause window:
 
-- do nothing: the wrapper follows `auto_mode_next`
-- press Enter: open operator input mode
-- type prompts in operator input mode: queue them for the next turn
-- use `/show`, `/clear`, or `/stop` as needed
+- do nothing: the wrapper auto-continues unless the last reply explicitly ended with `AUTO_MODE_NEXT=stop`
+- press Enter: return control to the idle Codex child
+- type a line and press Enter: send that line to the idle Codex child as the next user prompt
+- press `Ctrl+C`: send an interrupt to the idle Codex child
 
 ## 7. Configuration
 
@@ -133,7 +133,6 @@ export CODEX_AUTOPILOT_REAL_BIN=/opt/homebrew/bin/codex
 ## 8. Troubleshooting
 
 - If the wrapper passes a command straight through instead of entering autopilot mode, use one of the supported prompt or `exec` forms above.
-- If a session appears to behave like plain `codex`, confirm you launched `codexa`, not the upstream `codex`, and inspect the matching JSONL under `~/.codex/sessions/`.
-- If `codexa --yolo resume`, `codexa --yolo resume --last`, or `codexa --yolo resume <session-id>` is pointed at a native Codex session, give the resumed session one real prompt first if needed; after that first resumed turn exits, the wrapper can continue automatically from the session artifact.
-- If the wrapper reports that multiple Codex sessions changed in the same workspace during one turn, close the extra session and rerun. The wrapper now refuses to guess which JSONL belongs to the turn.
+- If a session appears to behave like plain `codex`, confirm you launched `codexa`, not the upstream `codex`. Wrapper-generated turns should end with `AUTO_MODE_NEXT=continue|stop`, but user-driven turns can still be recovered through the session transcript fallback.
+- If `codexa --yolo resume`, `codexa --yolo resume --last`, or `codexa --yolo resume <session-id>` is pointed at a native Codex session, give the resumed session one real prompt first if needed. The wrapper will bootstrap from that completed turn.
 - If the wrapper cannot resolve the real Codex binary, set `CODEX_AUTOPILOT_REAL_BIN`.

@@ -16,6 +16,11 @@ type reportResolution struct {
 	Result *turnResult
 }
 
+type turnDecision struct {
+	Action string
+	Line   string
+}
+
 func NewApp() (*App, error) {
 	return &App{}, nil
 }
@@ -51,6 +56,12 @@ func (a *App) Run(args []string) int {
 	}
 
 	var state *State
+	var live *interactiveSession
+	defer func() {
+		if live != nil {
+			_ = live.Close()
+		}
+	}()
 	if strings.TrimSpace(inv.Prompt) != "" {
 		state = newState(inv.Workspace, inv.Prompt, "hybrid", inv.ExplicitSessionID)
 		if inv.ExplicitSessionID != "" {
@@ -58,42 +69,28 @@ func (a *App) Run(args []string) int {
 		}
 	}
 
-	for {
-		if state == nil {
-			bootstrapResult, bootstrapState, err := a.bootstrapInteractiveState(inv)
-			if err != nil {
-				return fail(err)
-			}
-			state = bootstrapState
-			resolution, err := a.extractReportResolution(inv, state, bootstrapResult)
-			if err != nil {
-				return fail(err)
-			}
-			state.LastReport = resolution.Report
-			state.LastAssistantMessage = stripReportBlock(bootstrapResult.LastMessage)
-			if resolution.Result.SessionID != "" {
-				state.LastSessionID = resolution.Result.SessionID
-			}
-			if resolution.Result.SessionPath != "" {
-				state.LastSessionPath = resolution.Result.SessionPath
-			}
-			decision := postTurnDecision(cfg.PauseWindowSeconds, resolution.Report, &state.PendingUserPrompts)
-			if decision == "stop" {
-				fmt.Printf("\n=== Wrapper Stop ===\nStopping after turn %d.\n", state.TurnIndex)
-				return 0
-			}
-			continue
-		}
-
-		state.TurnIndex++
-		snapshotBefore := captureGitSnapshot(inv.Workspace)
-		prompt := buildPrompt(state, snapshotBefore, cfg.SkillHint)
-		result, err := a.runSessionTurn(inv, state, inv.Workspace, prompt)
+	var result *turnResult
+	if state == nil {
+		bootstrapResult, bootstrapState, session, err := a.bootstrapInteractiveState(inv)
 		if err != nil {
 			return fail(err)
 		}
+		live = session
+		state = bootstrapState
+		result = bootstrapResult
+	} else {
+		state.TurnIndex++
+		snapshotBefore := captureGitSnapshot(inv.Workspace)
+		prompt := buildPrompt(state, snapshotBefore, cfg.SkillHint)
+		var err error
+		result, live, err = a.runSessionTurn(inv, state, prompt, live)
+		if err != nil {
+			return fail(err)
+		}
+	}
+
+	for {
 		state.SessionStarted = true
-		state.PendingUserPrompts = nil
 		state.LastAssistantMessage = stripReportBlock(result.LastMessage)
 		if result.SessionID != "" {
 			state.LastSessionID = result.SessionID
@@ -118,44 +115,81 @@ func (a *App) Run(args []string) int {
 			state.LastSessionPath = resolution.Result.SessionPath
 		}
 
-		decision := postTurnDecision(cfg.PauseWindowSeconds, resolution.Report, &state.PendingUserPrompts)
-		if decision == "stop" {
+		decision := postTurnDecision(cfg.PauseWindowSeconds, resolution.Report)
+		switch decision.Action {
+		case "stop":
+			if live != nil {
+				_ = live.Close()
+				live = nil
+			}
 			fmt.Printf("\n=== Wrapper Stop ===\nStopping after turn %d.\n", state.TurnIndex)
 			return 0
+		case "handoff":
+			if live == nil {
+				return fail(fmt.Errorf("live interactive session is unavailable for user handoff"))
+			}
+			if err := live.ResumeUserControl(decision.Line); err != nil {
+				return fail(err)
+			}
+			state.TurnIndex++
+			result, err = live.WaitForTurn()
+			if err != nil {
+				return fail(err)
+			}
+		case "interrupt":
+			if live == nil {
+				fmt.Println("\nWrapper interrupted while idle.")
+				return 0
+			}
+			if err := live.SendIdleInterrupt(); err != nil {
+				return fail(err)
+			}
+			result, err = live.WaitForTurn()
+			if err != nil {
+				return fail(err)
+			}
+			if result.ReturnCode == 0 {
+				fmt.Println("\nWrapper interrupted while idle.")
+			}
+			return 0
+		default:
+			state.TurnIndex++
+			snapshotBefore := captureGitSnapshot(inv.Workspace)
+			prompt := buildPrompt(state, snapshotBefore, cfg.SkillHint)
+			result, live, err = a.runSessionTurn(inv, state, prompt, live)
+			if err != nil {
+				return fail(err)
+			}
 		}
 	}
 }
 
-func (a *App) bootstrapInteractiveState(inv Invocation) (*turnResult, *State, error) {
+func (a *App) bootstrapInteractiveState(inv Invocation) (*turnResult, *State, *interactiveSession, error) {
 	turnIndex := 1
-	startedAt := time.Now()
-	result, err := runInteractiveCodexTurn(a.realCodex, inv.Workspace, inv.initialInteractiveArgs(""), "")
+	session, err := startInteractiveSession(a.realCodex, inv.Workspace, inv.initialInteractiveArgs(""), "")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	result, err := session.WaitForTurn()
+	if err != nil {
+		_ = session.Close()
+		return nil, nil, nil, err
 	}
 	if result.ReturnCode != 0 {
-		return nil, nil, fmt.Errorf("codex exited with status %d during initial interactive session", result.ReturnCode)
+		_ = session.Close()
+		return nil, nil, nil, fmt.Errorf("codex exited with status %d during initial interactive session", result.ReturnCode)
 	}
-	artifact, err := findLatestSessionArtifact(inv.Workspace, time.Time{}, result.SessionID)
-	if err != nil {
-		return nil, nil, err
-	}
-	initialGoal, err := extractBootstrapUserGoal(artifact.SessionPath, startedAt)
-	if err != nil {
-		return nil, nil, err
-	}
+	initialGoal := session.InitialGoal()
 	if strings.TrimSpace(initialGoal) == "" {
-		initialGoal = strings.TrimSpace(artifact.InitialUserGoal)
-	}
-	if initialGoal == "" {
-		return nil, nil, fmt.Errorf("could not derive an initial project goal from the first interactive session in %s", artifact.SessionPath)
+		_ = session.Close()
+		return nil, nil, nil, fmt.Errorf("could not derive an initial project goal from the first interactive turn; start with an explicit user prompt")
 	}
 	state := newState(inv.Workspace, initialGoal, "hybrid", result.SessionID)
 	state.TurnIndex = turnIndex
 	state.SessionStarted = true
 	state.LastSessionID = result.SessionID
 	state.LastSessionPath = result.SessionPath
-	return result, state, nil
+	return result, state, session, nil
 }
 
 func shouldReuseExistingStateForInteractiveResume(inv Invocation) bool {
@@ -166,28 +200,30 @@ func shouldBootstrapInteractiveResume(inv Invocation) bool {
 	return inv.Mode == modeInteractiveResume && strings.TrimSpace(inv.Prompt) == ""
 }
 
-func (a *App) runSessionTurn(inv Invocation, state *State, workspace, prompt string) (*turnResult, error) {
+func (a *App) runSessionTurn(inv Invocation, state *State, prompt string, live *interactiveSession) (*turnResult, *interactiveSession, error) {
 	if inv.Mode == modeInteractive || inv.Mode == modeInteractiveResume || inv.Mode == modeInteractiveBare {
-		var cmdArgs []string
-		sessionHint := state.LastSessionID
-		if !state.SessionStarted {
-			cmdArgs = inv.initialInteractiveArgs(prompt)
-			if inv.ExplicitSessionID != "" {
-				sessionHint = inv.ExplicitSessionID
+		if live == nil {
+			session, err := startInteractiveSession(a.realCodex, state.Workspace, inv.initialInteractiveArgs(prompt), state.LastSessionID)
+			if err != nil {
+				return nil, nil, err
 			}
-		} else {
-			cmdArgs = inv.resumeInteractiveArgs(prompt, state.LastSessionID)
+			result, err := session.WaitForTurn()
+			return result, session, err
 		}
-		return runInteractiveCodexTurn(a.realCodex, workspace, cmdArgs, sessionHint)
+		if err := live.Continue(prompt); err != nil {
+			return nil, nil, err
+		}
+		result, err := live.WaitForTurn()
+		return result, live, err
 	}
 
 	messageFile, err := os.CreateTemp("", "codexa-last-message-*.md")
 	if err != nil {
-		return nil, err
+		return nil, live, err
 	}
 	messagePath := messageFile.Name()
 	if err := messageFile.Close(); err != nil {
-		return nil, err
+		return nil, live, err
 	}
 	defer os.Remove(messagePath)
 
@@ -197,7 +233,8 @@ func (a *App) runSessionTurn(inv Invocation, state *State, workspace, prompt str
 	} else {
 		cmdArgs = inv.resumeCommandArgs(messagePath)
 	}
-	return runCodexTurn(a.realCodex, workspace, prompt, messagePath, cmdArgs)
+	result, err := runCodexTurn(a.realCodex, state.Workspace, prompt, messagePath, cmdArgs)
+	return result, live, err
 }
 
 func (a *App) extractReportResolution(inv Invocation, state *State, result *turnResult) (*reportResolution, error) {
@@ -211,70 +248,21 @@ func (a *App) extractReportResolution(inv Invocation, state *State, result *turn
 	}, nil
 }
 
-func postTurnDecision(pauseSeconds int, report *AutoReport, queue *[]string) string {
+func postTurnDecision(pauseSeconds int, report *AutoReport) turnDecision {
 	fmt.Printf("\n=== Turn Summary ===\n%s\nauto_mode_next=%s\n", report.Summary, report.AutoModeNext)
-	if report.UserEngagementNeeded {
-		return operatorLoop(report, queue, "")
+	if report.AutoModeNext == "stop" {
+		return turnDecision{Action: "stop"}
 	}
 	if pauseSeconds <= 0 {
-		return report.AutoModeNext
+		return turnDecision{Action: "continue"}
 	}
-	fmt.Printf("Next turn decision in %ds. Press Enter now to open operator input mode.\n", pauseSeconds)
+	fmt.Printf("Auto-continue in %ds. Press Enter to return control to Codex, or Ctrl+C to send an interrupt to the idle Codex session.\n", pauseSeconds)
 	trigger := waitForOperatorTrigger(time.Duration(pauseSeconds) * time.Second)
 	switch trigger.Trigger {
 	case operatorTriggerEnter:
-		return operatorLoop(report, queue, trigger.Line)
+		return turnDecision{Action: "handoff", Line: trigger.Line}
 	case operatorTriggerInterrupt:
-		fmt.Println("\nWrapper interrupted while idle.")
-		return "stop"
+		return turnDecision{Action: "interrupt"}
 	}
-	return report.AutoModeNext
-}
-
-func operatorLoop(report *AutoReport, queue *[]string, initialLine string) string {
-	fmt.Println("Operator input mode. Enter text to queue a prompt, /show, /clear, /stop, or an empty line to continue.")
-	if initialLine != "" {
-		fmt.Printf("autopilot> %s\n", initialLine)
-		return handleOperatorLine(report, queue, initialLine)
-	}
-	for {
-		fmt.Print("autopilot> ")
-		result, err := waitForOperatorLine()
-		if err != nil {
-			return report.AutoModeNext
-		}
-		if result.Trigger == operatorTriggerInterrupt {
-			fmt.Println("^C")
-			return "stop"
-		}
-		decision := handleOperatorLine(report, queue, result.Line)
-		if decision != "" {
-			return decision
-		}
-	}
-}
-
-func handleOperatorLine(report *AutoReport, queue *[]string, line string) string {
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return report.AutoModeNext
-	}
-	switch line {
-	case "/show":
-		fmt.Println("Queued prompts:")
-		for _, item := range *queue {
-			fmt.Println("-", item)
-		}
-		return ""
-	case "/clear":
-		*queue = nil
-		fmt.Println("Queue cleared.")
-		return ""
-	case "/stop":
-		return "stop"
-	default:
-		*queue = append(*queue, line)
-		fmt.Println("Queued.")
-		return ""
-	}
+	return turnDecision{Action: "continue"}
 }

@@ -68,7 +68,8 @@ func protocolInstructions() string {
 		"At the end of your final response, append a machine-readable stop/continue marker.",
 		"End your final response with exactly one line: `AUTO_MODE_NEXT=continue` or `AUTO_MODE_NEXT=stop`.",
 		"The wrapper also accepts `AUTO_CONTINUE_MODE=continue|stop` for compatibility, but prefer `AUTO_MODE_NEXT`.",
-		"If you omit the stop/continue line entirely, the wrapper will default to continuing with the auto-generated next-turn prompt.",
+		"Wrapper-generated turns should include that final line so the live session can continue promptly.",
+		"User-driven interactive turns may omit the marker; in that case the wrapper will still default to continuing after it recovers the last reply.",
 		"Do not append JSON or any other machine-readable block. The stop/continue line is the entire wrapper protocol.",
 	}, "\n")
 }

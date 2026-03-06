@@ -95,33 +95,18 @@ func TestShouldBootstrapInteractiveResume(t *testing.T) {
 	}
 }
 
-func TestHandleOperatorLine(t *testing.T) {
-	report := &AutoReport{AutoModeNext: "continue"}
-	queue := []string{}
-
-	if got := handleOperatorLine(report, &queue, "ship it"); got != "" {
-		t.Fatalf("unexpected decision for queued prompt: %q", got)
-	}
-	if len(queue) != 1 || queue[0] != "ship it" {
-		t.Fatalf("unexpected queue: %#v", queue)
-	}
-	if got := handleOperatorLine(report, &queue, "/stop"); got != "stop" {
-		t.Fatalf("unexpected stop decision: %q", got)
-	}
-	if got := handleOperatorLine(report, &queue, ""); got != "continue" {
-		t.Fatalf("unexpected empty-line decision: %q", got)
+func TestPostTurnDecisionStopsExplicitly(t *testing.T) {
+	report := &AutoReport{AutoModeNext: "stop", Summary: "done"}
+	got := postTurnDecision(0, report)
+	if got.Action != "stop" {
+		t.Fatalf("unexpected decision: %#v", got)
 	}
 }
 
-func TestOperatorInterruptStopsWrapperPrompt(t *testing.T) {
-	report := &AutoReport{AutoModeNext: "continue"}
-	if got := func() string {
-		result := operatorTriggerResult{Trigger: operatorTriggerInterrupt}
-		if result.Trigger == operatorTriggerInterrupt {
-			return "stop"
-		}
-		return report.AutoModeNext
-	}(); got != "stop" {
-		t.Fatalf("unexpected interrupt decision: %q", got)
+func TestPostTurnDecisionDefaultsToContinue(t *testing.T) {
+	report := &AutoReport{AutoModeNext: "continue", Summary: "more work remains"}
+	got := postTurnDecision(0, report)
+	if got.Action != "continue" {
+		t.Fatalf("unexpected decision: %#v", got)
 	}
 }

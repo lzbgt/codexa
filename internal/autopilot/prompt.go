@@ -21,15 +21,6 @@ func buildPrompt(state *State, snapshot GitSnapshot, skillHint bool) string {
 		b.WriteString(strings.TrimSpace(state.LastAssistantMessage))
 		b.WriteString("\nLAST_ASSISTANT_RESPONSE>>>\n\n")
 	}
-	b.WriteString("Queued operator prompts for this turn:\n")
-	if len(state.PendingUserPrompts) == 0 {
-		b.WriteString("- None queued by the operator.\n\n")
-	} else {
-		for index, prompt := range state.PendingUserPrompts {
-			fmt.Fprintf(&b, "- Operator prompt %d: %s\n", index+1, prompt)
-		}
-		b.WriteString("\n")
-	}
 	b.WriteString("Execution requirements:\n")
 	b.WriteString("- Use the most recent context and proceed without waiting for user input.\n")
 	b.WriteString("- Priority order:\n")
@@ -38,7 +29,6 @@ func buildPrompt(state *State, snapshot GitSnapshot, skillHint bool) string {
 	b.WriteString("  3. Else pick a batch of high-leverage tasks, usually 2 to 6, that compound and reduce future maintenance.\n")
 	b.WriteString("- Start by identifying any new tasks or blockers from the quoted last assistant response.\n")
 	b.WriteString("- Merge and reweight those findings against the current repo TODOs / task documents before deciding what to do next.\n")
-	b.WriteString("- Reweight tasks using the operator prompts first, then the remaining concrete blockers.\n")
 	b.WriteString("- Feature-delivering work comes before maintenance unless maintenance unblocks features or mitigates P0/P1 risks.\n")
 	b.WriteString("- Use multiple plans within the turn: macro plan first, then micro steps, and keep executing without stopping after the first completed item.\n")
 	b.WriteString("- Prefer fundamental fixes over ad-hoc tweaks. Keep boundaries clean, reduce coupling, and add tests that lock in behavior.\n")
