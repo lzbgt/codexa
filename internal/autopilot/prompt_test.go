@@ -23,4 +23,7 @@ func TestBuildPromptIncludesProtocol(t *testing.T) {
 	if !strings.Contains(prompt, "LAST_ASSISTANT_RESPONSE") || !strings.Contains(prompt, "Implemented the parser fix and updated TODOS.") {
 		t.Fatalf("prompt did not include the quoted last assistant response")
 	}
+	if strings.Contains(prompt, "\nAUTO_MODE_NEXT=continue\n") || strings.Contains(prompt, "\nAUTO_MODE_NEXT=stop\n") {
+		t.Fatalf("prompt should not embed exact footer example lines because the PTY echo can be mistaken for a completed turn")
+	}
 }

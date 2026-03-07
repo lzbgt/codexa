@@ -30,10 +30,13 @@ func TestExtractReportDefaultsToContinueWithoutFooter(t *testing.T) {
 
 func TestProtocolInstructionsMentionMarkerOnly(t *testing.T) {
 	text := protocolInstructions()
-	for _, want := range []string{"AUTO_MODE_NEXT=continue", "AUTO_CONTINUE_MODE=continue|stop", "Do not append JSON"} {
+	for _, want := range []string{"AUTO_MODE_NEXT", "AUTO_CONTINUE_MODE", "Do not append JSON"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("protocol instructions missing %q", want)
 		}
+	}
+	if strings.Contains(text, "AUTO_MODE_NEXT=continue") || strings.Contains(text, "AUTO_MODE_NEXT=stop") {
+		t.Fatalf("protocol instructions should avoid exact footer example lines in wrapper-generated prompts")
 	}
 	if strings.Contains(text, "AUTO_REPORT_JSON") {
 		t.Fatalf("protocol instructions should not mention JSON markers anymore")
