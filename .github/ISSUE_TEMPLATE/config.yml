@@ -1,11 +1,11 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Paid support question - CodexW Founding Access
+  - name: Paid setup question - CodexW Founding Access
     url: https://x2.brucelu.top/products/contact/?offer=codexw&source=github-issue-codexa
-    about: Ask a pre-sales support question before opening a paid review or setup request.
-  - name: Paid support checkout - CodexW Founding Access
+    about: Ask a pre-sales support question before opening a paid setup request.
+  - name: Paid setup checkout - CodexW Founding Access
     url: https://x2.brucelu.top/codexw/checkout/?source=github-issue-codexa
-    about: Book the paid review or access package for this repository.
-  - name: Sample deliverable or proof
+    about: Book the paid CodexW setup/access package for this repository.
+  - name: Sample setup runbook
     url: https://x2.brucelu.top/codexw/sample/
-    about: Inspect the sample output or proof page before deciding.
+    about: Inspect the sample setup output before deciding.
