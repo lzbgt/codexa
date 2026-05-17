@@ -13,6 +13,15 @@ The wrapper is designed for this workflow:
 - no repo-local wrapper cache or state directory
 - one-line stop or continue marker only
 
+## Commercial setup support
+
+If you want a supported private workflow instead of maintaining a wrapper yourself, CodexW founding access is available here:
+
+- Product page: https://x2.brucelu.top/codexw/
+- Public verification repo: https://github.com/lzbgt/codexw-public
+
+CodexW is setup/onboarding support for local Codex terminal operators. It does not include OpenAI API credits, guaranteed Codex availability, or changes to OpenAI products.
+
 ## Build
 
 ```bash
